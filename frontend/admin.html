@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Админ-панель — GOS Assistant</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="admin-layout">
+    <!-- Sidebar -->
+    <aside class="admin-sidebar">
+      <div class="admin-brand">
+        <div class="brand-icon">GA</div>
+        <span>Admin Panel</span>
+      </div>
+
+      <nav class="admin-nav">
+        <div class="admin-nav-section">Управление</div>
+        <div class="admin-nav-item active" data-view="dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
+          <span>Дашборд</span>
+        </div>
+        <div class="admin-nav-item" data-view="servers">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          <span>Серверы</span>
+        </div>
+        <div class="admin-nav-item" data-view="categories">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          <span>Категории</span>
+        </div>
+        <div class="admin-nav-item" data-view="articles">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          <span>Статьи</span>
+        </div>
+        <div class="admin-nav-item" data-view="users">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span>Пользователи</span>
+        </div>
+
+        <div class="admin-nav-section">Прочее</div>
+        <div class="admin-nav-item" id="nav-home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12l9-9 9 9M5 10v10h14V10"/></svg>
+          <span>Сайт</span>
+        </div>
+        <div class="admin-nav-item" id="nav-logout">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span>Выйти</span>
+        </div>
+      </nav>
+
+      <div class="admin-sidebar-footer">
+        <div class="admin-user">
+          <div class="admin-avatar" id="user-avatar">?</div>
+          <div>
+            <div class="admin-user-name" id="user-name">—</div>
+            <div class="admin-user-role" id="user-role">—</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Content -->
+    <main class="admin-content">
+      <!-- DASHBOARD -->
+      <div class="view" data-view="dashboard">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Дашборд</div>
+            <div class="admin-subtitle">Общая статистика по системе</div>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Пользователей</div>
+            <div class="stat-value" id="stat-users">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Серверов</div>
+            <div class="stat-value" id="stat-servers">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Категорий</div>
+            <div class="stat-value" id="stat-categories">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Статей</div>
+            <div class="stat-value" id="stat-articles">0</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Последние пользователи</th><th>Email</th><th>Роль</th><th>Регистрация</th></tr>
+            </thead>
+            <tbody id="recent-users"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SERVERS -->
+      <div class="view hidden" data-view="servers">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Серверы</div>
+            <div class="admin-subtitle">Управление списком серверов</div>
+          </div>
+          <button class="btn btn-primary" data-modal="server">+ Добавить сервер</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Иконка</th><th>ID</th><th>Название</th><th>Статус</th><th></th></tr>
+            </thead>
+            <tbody id="servers-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CATEGORIES -->
+      <div class="view hidden" data-view="categories">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Категории</div>
+            <div class="admin-subtitle">Разделы законов и правил</div>
+          </div>
+          <button class="btn btn-primary" data-modal="category">+ Добавить категорию</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>ID</th><th>Название</th><th>Короткое</th><th>Тип</th><th>Цвет</th><th></th></tr>
+            </thead>
+            <tbody id="categories-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ARTICLES -->
+      <div class="view hidden" data-view="articles">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Статьи</div>
+            <div class="admin-subtitle">Управление статьями и правилами</div>
+          </div>
+          <button class="btn btn-primary" data-modal="article">+ Добавить статью</button>
+        </div>
+        <div class="flex gap-3 mb-4">
+          <select class="input select" id="filter-server" style="max-width:200px"></select>
+          <select class="input select" id="filter-category" style="max-width:220px"></select>
+          <input type="text" class="input" id="filter-search" placeholder="Поиск..." style="flex:1" />
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Код</th><th>Название</th><th>Сервер</th><th>Категория</th><th>Звёзды</th><th></th></tr>
+            </thead>
+            <tbody id="articles-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- USERS -->
+      <div class="view hidden" data-view="users">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Пользователи</div>
+            <div class="admin-subtitle">Список зарегистрированных пользователей</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Email</th><th>Имя</th><th>Роль</th><th>Регистрация</th><th>Последний вход</th><th></th></tr>
+            </thead>
+            <tbody id="users-table"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Server modal -->
+  <div class="modal-backdrop" id="modal-server">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-server-title">Новый сервер</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group"><label class="input-label">ID (slug)</label><input type="text" class="input" id="srv-id" placeholder="server-1" /></div>
+        <div class="input-group"><label class="input-label">Название</label><input type="text" class="input" id="srv-name" /></div>
+        <div class="input-group"><label class="input-label">Иконка (2-3 символа)</label><input type="text" class="input" id="srv-icon" placeholder="S1" /></div>
+        <div class="input-group"><label class="input-label">Цвет (HEX)</label><input type="text" class="input" id="srv-color" placeholder="#DF005B" value="#DF005B" /></div>
+        <div class="input-group"><label class="input-label">Описание</label><textarea class="input textarea" id="srv-desc"></textarea></div>
+        <div class="input-group"><label class="input-label">Сортировка</label><input type="number" class="input" id="srv-order" value="0" /></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="srv-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Category modal -->
+  <div class="modal-backdrop" id="modal-category">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-category-title">Новая категория</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group"><label class="input-label">ID (slug)</label><input type="text" class="input" id="cat-id" placeholder="uk" /></div>
+        <div class="input-group"><label class="input-label">Название</label><input type="text" class="input" id="cat-name" /></div>
+        <div class="input-group"><label class="input-label">Короткое название</label><input type="text" class="input" id="cat-short" placeholder="УК" /></div>
+        <div class="input-group"><label class="input-label">Тип</label>
+          <select class="input select" id="cat-type">
+            <option value="laws">Законы</option>
+            <option value="rules">Правила</option>
+            <option value="other">Прочее</option>
+          </select>
+        </div>
+        <div class="input-group"><label class="input-label">Цвет (HEX)</label><input type="text" class="input" id="cat-color" value="#DF005B" /></div>
+        <div class="input-group"><label class="input-label">Сортировка</label><input type="number" class="input" id="cat-order" value="0" /></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="cat-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Article modal -->
+  <div class="modal-backdrop" id="modal-article">
+    <div class="modal" style="max-width:680px">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-article-title">Новая статья</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="flex gap-3">
+          <div class="input-group flex-1"><label class="input-label">Сервер</label>
+            <select class="input select" id="art-server"></select>
+          </div>
+          <div class="input-group flex-1"><label class="input-label">Категория</label>
+            <select class="input select" id="art-category"></select>
+          </div>
+        </div>
+        <div class="flex gap-3">
+          <div class="input-group" style="max-width:140px"><label class="input-label">Код</label><input type="text" class="input" id="art-code" placeholder="1.1" /></div>
+          <div class="input-group flex-1"><label class="input-label">Название</label><input type="text" class="input" id="art-title" /></div>
+        </div>
+        <div class="input-group"><label class="input-label">Текст</label><textarea class="input textarea" id="art-text" rows="5"></textarea></div>
+        <div class="input-group"><label class="input-label">Наказание</label><input type="text" class="input" id="art-penalty" placeholder="Штраф 5000 ₽" /></div>
+        <div class="flex gap-3">
+          <div class="input-group" style="max-width:160px"><label class="input-label">Звёзды розыска (0-5)</label><input type="number" min="0" max="5" class="input" id="art-stars" value="0" /></div>
+          <div class="input-group" style="max-width:160px"><label class="input-label">Сортировка</label><input type="number" class="input" id="art-order" value="0" /></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="art-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>
