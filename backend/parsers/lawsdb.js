@@ -23,13 +23,60 @@ const LAW_CATEGORY_MAP = {
 // Maps source rule sections to our category IDs
 // (these categories will be auto-created when importing)
 const RULE_CATEGORY_MAP = {
-  'main-rules':      { id: 'rules-main',    name: 'Основные правила',         short: 'Общие',   color: '#8B5CF6' },
-  'game-zones':      { id: 'rules-zones',   name: 'Игровые зоны',             short: 'Зоны',    color: '#EC4899' },
-  'faction-leaders': { id: 'rules-leaders', name: 'Правила лидеров',          short: 'Лидеры',  color: '#06B6D4' },
-  'forum-rules':     { id: 'rules-forum',   name: 'Правила форума',           short: 'Форум',   color: '#10B981' },
-  'cheat-check':     { id: 'rules-cheat',   name: 'Проверки на ПО',           short: 'ПО',      color: '#F59E0B' },
-  'admin-rules':     { id: 'rules-admin',   name: 'Внутренние правила',       short: 'Адм.',    color: '#DF005B' },
+  // general.json
+  'main-rules':         { id: 'rules-main',         name: 'Основные правила',          short: 'Общие',    color: '#8B5CF6' },
+  'game-zones':         { id: 'rules-zones',        name: 'Игровые зоны',              short: 'Зоны',     color: '#EC4899' },
+  'faction-leaders':    { id: 'rules-leaders',      name: 'Правила лидеров',           short: 'Лидеры',   color: '#06B6D4' },
+  'forum-rules':        { id: 'rules-forum',        name: 'Правила форума',            short: 'Форум',    color: '#10B981' },
+  'cheat-check':        { id: 'rules-cheat',        name: 'Проверки на ПО',            short: 'ПО',       color: '#F59E0B' },
+  'admin-rules':        { id: 'rules-admin',        name: 'Внутренние правила',        short: 'Адм.',     color: '#DF005B' },
+  // events.json
+  'workshops-dealers':  { id: 'events-workshops',   name: 'Воркшопы и дилеры',         short: 'Воркшопы', color: '#0070F3' },
+  'supply-hijack':      { id: 'events-supply',      name: 'Захват грузов',             short: 'Грузы',    color: '#F97316' },
+  'fort-zancudo':       { id: 'events-zancudo',     name: 'Форт Занкудо',              short: 'Занкудо',  color: '#84CC16' },
+  'cayo-perico':        { id: 'events-cayo',        name: 'Кайо-Перико',               short: 'Кайо',     color: '#14B8A6' },
+  'material-war':       { id: 'events-material',    name: 'Битва за материалы',        short: 'Битва',    color: '#A855F7' },
+  // organizations.json
+  'family-general':     { id: 'org-family',         name: 'Правила семей',             short: 'Семьи',    color: '#EF4444' },
+  'crime-general':      { id: 'org-crime',          name: 'Криминальные правила',      short: 'Крим.',    color: '#DF005B' },
+  'territory-war':      { id: 'org-territory',      name: 'Войны территорий',          short: 'Терр.',    color: '#F59E0B' },
+  'raids':              { id: 'org-raids',          name: 'Рейды',                     short: 'Рейды',    color: '#EAB308' },
+  'business-robbery':   { id: 'org-biz-rob',        name: 'Ограбление бизнеса',        short: 'Бизнес',   color: '#22C55E' },
+  'bank-robbery':       { id: 'org-bank-rob',       name: 'Ограбление банка',          short: 'Банк',     color: '#10B981' },
+  'martial-law':        { id: 'org-martial',        name: 'Военное положение',         short: 'Воен.',    color: '#06B6D4' },
+  'state-general':      { id: 'org-state',          name: 'Правила государства',       short: 'Гос.',     color: '#0EA5E9' },
+  'game-terror':        { id: 'org-terror',         name: 'Игровой террор',            short: 'Террор',   color: '#3B82F6' },
+  'robbery-kidnap':     { id: 'org-kidnap',         name: 'Похищение и грабёж',        short: 'Грабёж',   color: '#6366F1' },
 };
+
+// Palette to assign colors to unknown sections (deterministic by hash)
+const FALLBACK_COLORS = ['#8B5CF6', '#EC4899', '#06B6D4', '#10B981', '#F59E0B', '#DF005B', '#0070F3', '#F97316', '#84CC16', '#14B8A6'];
+
+function slugToTitle(slug) {
+  return String(slug)
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function hashString(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// Get mapping for a section; if unknown — generate one
+function getRuleCategory(sectionKey) {
+  if (RULE_CATEGORY_MAP[sectionKey]) return RULE_CATEGORY_MAP[sectionKey];
+  // Auto-generate for unknown sections so future additions to source repo
+  // don't require code changes
+  const title = slugToTitle(sectionKey);
+  return {
+    id: 'rules-' + sectionKey.replace(/[^a-z0-9-]/gi, '-').toLowerCase(),
+    name: title,
+    short: title.slice(0, 12),
+    color: FALLBACK_COLORS[hashString(sectionKey) % FALLBACK_COLORS.length],
+  };
+}
 
 async function fetchJson(path) {
   const url = `${BASE}/${path}`.replace(/ /g, '%20');
@@ -99,8 +146,8 @@ function flattenRules(rawData) {
   for (const sectionKey of Object.keys(data)) {
     const section = data[sectionKey];
     const items = Array.isArray(section) ? section : (section.articles || []);
-    const mapping = RULE_CATEGORY_MAP[sectionKey];
-    if (!mapping) continue;
+    if (!Array.isArray(items) || items.length === 0) continue;
+    const mapping = getRuleCategory(sectionKey);
     for (const a of items) {
       const pieces = [a.text, a.explanation, a.note, a.exception].filter(Boolean).join('\n\n');
       out.push({
