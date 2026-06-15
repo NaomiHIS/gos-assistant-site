@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+backend/.env
+!backend/.env.example
