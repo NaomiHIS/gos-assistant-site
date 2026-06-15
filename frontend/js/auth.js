@@ -122,9 +122,14 @@
     const username = $('reg-username').value.trim();
     const password = $('reg-password').value;
     const password2 = $('reg-password2').value;
+    const acceptTerms = $('reg-accept-terms').checked;
 
     if (password !== password2) {
       showError('Пароли не совпадают');
+      return;
+    }
+    if (!acceptTerms) {
+      showError('Необходимо принять Условия использования и Политику конфиденциальности');
       return;
     }
 
@@ -133,7 +138,7 @@
     btn.textContent = 'Создание...';
 
     try {
-      const data = await window.GosClient.auth.register(email, username, password);
+      const data = await window.GosClient.auth.register(email, username, password, acceptTerms);
       if (data.success) {
         window.GosClient.setToken(data.token);
         window.GosClient.setUser(data.user);

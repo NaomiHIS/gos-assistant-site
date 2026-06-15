@@ -460,6 +460,37 @@ img { max-width: 100%; display: block; }
 }
 .form-switch a { color: var(--accent-primary); font-weight: 500; cursor: pointer; }
 
+.terms-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 6px 0 14px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.terms-checkbox:hover { border-color: var(--border-color-light); }
+.terms-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--accent-primary);
+  flex-shrink: 0;
+}
+.terms-checkbox a {
+  color: var(--accent-primary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.terms-checkbox a:hover { color: var(--accent-hover); }
+
 /* ============================================================
    Admin layout
    ============================================================ */

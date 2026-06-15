@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
   discord_id VARCHAR(64) NULL UNIQUE,
   avatar_url VARCHAR(500) NULL,
   role ENUM('user', 'admin', 'moderator') NOT NULL DEFAULT 'user',
+  terms_accepted_at TIMESTAMP NULL,
+  terms_version VARCHAR(16) NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   last_login TIMESTAMP NULL,

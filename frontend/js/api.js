@@ -77,8 +77,8 @@
 
     auth: {
       login: (email, password) => request('POST', '/auth/login', { email, password }),
-      register: (email, username, password) =>
-        request('POST', '/auth/register', { email, username, password }),
+      register: (email, username, password, acceptTerms) =>
+        request('POST', '/auth/register', { email, username, password, acceptTerms }),
       me: () => request('GET', '/auth/me'),
       logout: () => request('POST', '/auth/logout'),
       logoutAll: () => request('POST', '/auth/logout-all'),

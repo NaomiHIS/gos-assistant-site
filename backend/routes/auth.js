@@ -16,10 +16,12 @@ function userPublic(u) {
   };
 }
 
+const TERMS_VERSION = '1.0';
+
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, username, password } = req.body || {};
+    const { email, username, password, acceptTerms } = req.body || {};
     if (!email || !username || !password) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
@@ -29,6 +31,12 @@ router.post('/register', async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: 'Пароль должен быть не менее 6 символов' });
     }
+    if (!acceptTerms) {
+      return res.status(400).json({
+        success: false,
+        error: 'Необходимо принять Условия использования и Политику конфиденциальности',
+      });
+    }
 
     const exists = await db.queryOne('SELECT id FROM users WHERE email = ?', [email]);
     if (exists) {
@@ -37,8 +45,9 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const result = await db.query(
-      'INSERT INTO users (email, username, password_hash, role) VALUES (?, ?, ?, ?)',
-      [email, username, hash, 'user']
+      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version)
+       VALUES (?, ?, ?, ?, NOW(), ?)`,
+      [email, username, hash, 'user', TERMS_VERSION]
     );
 
     const user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
