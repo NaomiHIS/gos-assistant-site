@@ -256,8 +256,10 @@ function escapeYaml(s) {
 }
 
 // GET /api/releases/feed/latest.yml — manifest for electron-updater
-// Auth via Authorization header (electron-updater supports requestHeaders)
-router.get('/feed/latest.yml', requireAuth, async (req, res) => {
+// PUBLIC: electron-updater needs to download files without auth headers
+// (the secondary file request often loses requestHeaders).
+// This is the standard pattern (GitHub Releases is public too).
+router.get('/feed/latest.yml', async (req, res) => {
   try {
     const r = await db.queryOne(
       "SELECT * FROM releases WHERE type='installer' AND is_active=1 AND sha512 IS NOT NULL ORDER BY created_at DESC LIMIT 1"
@@ -284,7 +286,8 @@ router.get('/feed/latest.yml', requireAuth, async (req, res) => {
 });
 
 // GET /api/releases/feed/:filename — serve actual file for electron-updater
-router.get('/feed/:filename', requireAuth, async (req, res) => {
+// PUBLIC (see /feed/latest.yml comment above)
+router.get('/feed/:filename', async (req, res) => {
   try {
     const filename = req.params.filename;
     // Try by original name first, then by stored filename
