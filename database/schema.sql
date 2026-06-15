@@ -97,3 +97,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   INDEX idx_token (token_hash),
   INDEX idx_user (user_id)
 ) ENGINE=InnoDB;
+
+-- ============================================================
+-- Sync state: per-source/file last imported timestamp
+-- Used to detect when alamantik/majestic-laws-db has fresh data
+-- ============================================================
+CREATE TABLE IF NOT EXISTS sync_state (
+  source VARCHAR(64) NOT NULL,        -- e.g. 'lawsdb'
+  resource VARCHAR(255) NOT NULL,     -- e.g. 'laws/atlanta-5.json'
+  source_updated_at BIGINT NULL,      -- ms since epoch from source
+  imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  articles_count INT DEFAULT 0,
+  PRIMARY KEY (source, resource)
+) ENGINE=InnoDB;

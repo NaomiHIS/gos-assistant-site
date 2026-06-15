@@ -5,6 +5,7 @@ const fetch = require('node-fetch');
 const generic = require('./generic');
 const majestic = require('./majestic');
 const codexdb = require('./codexdb');
+const lawsdb = require('./lawsdb');
 
 function pickParser(url) {
   try {
@@ -69,4 +70,4 @@ function parseRawText(text) {
   };
 }
 
-module.exports = { parseUrl, parseRawText, codexdb };
+module.exports = { parseUrl, parseRawText, codexdb, lawsdb };

@@ -505,6 +505,11 @@
     $('btn-codexdb-load').addEventListener('click', doCodexDbLoad);
     loadCodexDbServers();
 
+    // Majestic-Laws-DB buttons
+    $('btn-lawsdb-status').addEventListener('click', doLawsDbStatus);
+    $('btn-lawsdb-import-all').addEventListener('click', doLawsDbImportAll);
+    $('btn-lawsdb-import-one').addEventListener('click', doLawsDbImportOne);
+
     $('btn-parser-import').addEventListener('click', doImport);
     $('btn-parser-select-all').addEventListener('click', () => toggleAllParser(true));
     $('btn-parser-deselect-all').addEventListener('click', () => toggleAllParser(false));
@@ -775,6 +780,137 @@
       setParserStatus('Ошибка сети: ' + err.message, 'error');
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  // ============================================================
+  // Majestic-Laws-DB integration (alamantik/majestic-laws-db)
+  // ============================================================
+  function setLawsDbProgress(msg, append) {
+    const el = $('lawsdb-progress');
+    if (!el) return;
+    if (append) el.textContent += '\n' + msg;
+    else el.textContent = msg;
+  }
+
+  async function lawsdbFetch(path, opts) {
+    const init = {
+      headers: { 'Authorization': 'Bearer ' + window.GosClient.getToken() },
+      ...opts,
+    };
+    if (opts && opts.body && typeof opts.body !== 'string') {
+      init.body = JSON.stringify(opts.body);
+      init.headers['Content-Type'] = 'application/json';
+    }
+    const res = await fetch(window.GosClient.API_BASE + path, init);
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || res.statusText);
+    return data;
+  }
+
+  async function doLawsDbStatus() {
+    setLawsDbProgress('Проверка обновлений в alamantik/majestic-laws-db...');
+    try {
+      const data = await lawsdbFetch('/parser/lawsdb/sync-status');
+      const updatedServers = data.servers.filter((s) => s.hasUpdate);
+      const updatedRules = data.rules.filter((r) => r.hasUpdate);
+      const lines = [];
+      lines.push(`Источник: ${data.servers.length} серверов, ${data.rules.length} файлов правил`);
+      lines.push(`Требуют обновления: ${updatedServers.length} серверов, ${updatedRules.length} файлов правил`);
+      if (updatedServers.length > 0) {
+        lines.push('');
+        lines.push('Серверы с обновлениями:');
+        updatedServers.slice(0, 10).forEach((s) => {
+          const last = s.localUpdatedAt ? new Date(s.localUpdatedAt).toLocaleString('ru-RU') : 'никогда';
+          const next = s.sourceUpdatedAt ? new Date(s.sourceUpdatedAt).toLocaleString('ru-RU') : '?';
+          lines.push(`  • ${s.serverName}: было ${last} → стало ${next}`);
+        });
+      }
+      setLawsDbProgress(lines.join('\n'));
+    } catch (err) {
+      setLawsDbProgress('Ошибка: ' + err.message);
+    }
+  }
+
+  async function doLawsDbImportAll() {
+    const mode = $('lawsdb-mode').value;
+    const includeRules = $('lawsdb-include-rules').checked;
+    const confirmText = mode === 'replace'
+      ? `Это удалит ВСЕ существующие статьи и заменит ${'данными из Majestic-Laws-DB'} (19 серверов${includeRules ? ' + правила' : ''}). Продолжить?`
+      : `Импортировать 19 серверов${includeRules ? ' + правила' : ''} в дополнение к существующим данным?`;
+    if (!confirm(confirmText)) return;
+
+    setLawsDbProgress('Загрузка структуры и импорт... это займёт 30–60 секунд.');
+    const btn = $('btn-lawsdb-import-all');
+    btn.disabled = true;
+
+    try {
+      const data = await lawsdbFetch('/parser/lawsdb/import-all', {
+        method: 'POST',
+        body: { mode, includeRules },
+      });
+
+      const lines = [];
+      const ok = data.servers.filter((s) => !s.error);
+      const failed = data.servers.filter((s) => s.error);
+      const totalArticles = ok.reduce((sum, s) => sum + (s.inserted || 0), 0);
+      lines.push(`✓ Импорт завершён`);
+      lines.push(`Серверов: ${ok.length} из ${data.servers.length}`);
+      lines.push(`Статей всего: ${totalArticles}`);
+      if (data.rules) {
+        const rulesInserted = data.rules.reduce((sum, r) => sum + (r.inserted || 0), 0);
+        lines.push(`Правил: ${rulesInserted}`);
+      }
+      if (failed.length) {
+        lines.push('');
+        lines.push('Ошибки:');
+        failed.forEach((f) => lines.push(`  • ${f.name}: ${f.error}`));
+      }
+      setLawsDbProgress(lines.join('\n'));
+
+      // Reload local data
+      await loadAll();
+      populateParserSelects();
+      toast('База загружена: ' + totalArticles + ' статей');
+    } catch (err) {
+      setLawsDbProgress('Ошибка: ' + err.message);
+      toast('Ошибка импорта: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function doLawsDbImportOne() {
+    const mode = $('lawsdb-mode').value;
+    try {
+      // Get list of servers from the source
+      const struct = await lawsdbFetch('/parser/lawsdb/structure');
+      const options = struct.servers.map((s) => `${s.number}. ${s.name} (${s.file})`).join('\n');
+      const choice = prompt(
+        'Какой сервер импортировать? Введите номер из списка:\n\n' + options,
+        struct.servers[0]?.number || '1'
+      );
+      if (!choice) return;
+
+      const serverInfo = struct.servers.find((s) => String(s.number) === String(choice).trim());
+      if (!serverInfo) {
+        setLawsDbProgress('Сервер с номером ' + choice + ' не найден');
+        return;
+      }
+
+      setLawsDbProgress(`Загрузка сервера ${serverInfo.name}...`);
+      const data = await lawsdbFetch('/parser/lawsdb/import-server', {
+        method: 'POST',
+        body: { file: serverInfo.file, mode },
+      });
+      setLawsDbProgress(
+        `✓ ${serverInfo.name}: добавлено ${data.inserted}, удалено ${data.removed}, пропущено ${data.skipped}`
+      );
+      await loadAll();
+      populateParserSelects();
+      toast(`Импортирован ${serverInfo.name}: ${data.inserted} статей`);
+    } catch (err) {
+      setLawsDbProgress('Ошибка: ' + err.message);
     }
   }
 

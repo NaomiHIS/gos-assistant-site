@@ -192,10 +192,38 @@
           </div>
         </div>
 
-        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
-          <div class="section-title">Готовая база Codex-DB (рекомендуется)</div>
+        <div style="background: linear-gradient(135deg, rgba(223,0,91,0.08), rgba(0,112,243,0.04)); border: 1px solid var(--accent-primary); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="flex items-center justify-between mb-2">
+            <div class="section-title" style="margin: 0;">
+              ⚡ Majestic-Laws-DB <span style="font-size:10px;color:var(--accent-primary);margin-left:6px">РЕКОМЕНДУЕТСЯ</span>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="btn-lawsdb-status">Проверить обновления</button>
+          </div>
           <div class="text-xs text-muted mb-4">
-            Уже распарсенные законы Majestic RP. Обновляется автоматически.
+            Источник: <code>alamantik/majestic-laws-db</code> · 19 серверов, ~9 500 статей. Один клик — все законы и правила в твоей БД.
+          </div>
+
+          <div class="flex gap-3 mb-3">
+            <select class="input select" id="lawsdb-mode" style="max-width: 220px;">
+              <option value="replace">Заменить существующие</option>
+              <option value="add">Добавить к существующим</option>
+            </select>
+            <label class="flex items-center gap-2" style="cursor: pointer; padding: 0 12px;">
+              <input type="checkbox" id="lawsdb-include-rules" checked />
+              <span class="text-sm">Импортировать также правила</span>
+            </label>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-primary" id="btn-lawsdb-import-all">Импортировать ВСЁ (19 серверов + правила)</button>
+            <button class="btn btn-secondary" id="btn-lawsdb-import-one">Один сервер</button>
+          </div>
+          <div id="lawsdb-progress" class="text-xs text-muted mt-3" style="font-family: monospace; white-space: pre-line;"></div>
+        </div>
+
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px; display:none" id="codexdb-block">
+          <div class="section-title">Codex-DB (legacy)</div>
+          <div class="text-xs text-muted mb-4">
+            Старый источник — kirikch72/codex-db. Используйте Majestic-Laws-DB выше.
           </div>
           <div class="flex gap-3">
             <select class="input select" id="codexdb-server" style="flex: 1;"></select>
