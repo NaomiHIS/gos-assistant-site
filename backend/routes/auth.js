@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const router = express.Router();
 const db = require('../db');
 const { signToken, requireAuth } = require('../middleware/auth');
@@ -13,10 +14,82 @@ function userPublic(u) {
     username: u.username,
     role: u.role,
     avatar: u.avatar_url || null,
+    discordId: u.discord_id || null,
   };
 }
 
 const TERMS_VERSION = '1.0';
+
+// ============================================================
+// Discord OAuth state helpers (HMAC-signed)
+// ============================================================
+function signState(payload) {
+  return crypto
+    .createHmac('sha256', process.env.JWT_SECRET || 'dev-secret')
+    .update(payload)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function buildState(kind, userId) {
+  // For login: just a random nonce; for link: kind:userId:hmac
+  if (kind === 'login') {
+    return 'login:' + crypto.randomBytes(8).toString('hex');
+  }
+  return `link:${userId}:${signState('link:' + userId)}`;
+}
+
+function parseState(state) {
+  if (!state || typeof state !== 'string') return { kind: 'login' };
+  const parts = state.split(':');
+  if (parts[0] === 'link' && parts.length === 3) {
+    const userId = parseInt(parts[1], 10);
+    if (signState('link:' + userId) === parts[2]) {
+      return { kind: 'link', userId };
+    }
+  }
+  return { kind: 'login' };
+}
+
+function discordAuthUrl(state) {
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  const redirect = process.env.DISCORD_REDIRECT_URI;
+  return `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=identify%20email&state=${encodeURIComponent(state)}&prompt=consent`;
+}
+
+function discordAvatarUrl(userId, hash) {
+  return hash ? `https://cdn.discordapp.com/avatars/${userId}/${hash}.png` : null;
+}
+
+async function exchangeCodeForUser(code) {
+  const clientId = process.env.DISCORD_CLIENT_ID;
+  const clientSecret = process.env.DISCORD_CLIENT_SECRET;
+  const redirect = process.env.DISCORD_REDIRECT_URI;
+
+  const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirect,
+    }),
+  });
+  const tokens = await tokenRes.json();
+  if (!tokens.access_token) {
+    throw new Error('Discord token exchange failed');
+  }
+  const meRes = await fetch('https://discord.com/api/users/@me', {
+    headers: { Authorization: `Bearer ${tokens.access_token}` },
+  });
+  const dUser = await meRes.json();
+  if (!dUser.id) {
+    throw new Error('Could not load Discord profile');
+  }
+  return dUser;
+}
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
@@ -166,69 +239,129 @@ router.post('/logout-all', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
-// GET /api/auth/discord — start OAuth flow
+// GET /api/auth/discord — start OAuth flow for LOGIN (anonymous users)
 router.get('/discord', (req, res) => {
-  const clientId = process.env.DISCORD_CLIENT_ID;
-  const redirect = process.env.DISCORD_REDIRECT_URI;
-  if (!clientId || !redirect) {
-    return res.status(503).json({ success: false, error: 'Discord OAuth не настроен' });
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
+    return res.status(503).send('Discord OAuth не настроен');
   }
-  const url = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirect)}&response_type=code&scope=identify%20email`;
-  res.redirect(url);
+  const state = buildState('login');
+  res.redirect(discordAuthUrl(state));
 });
 
-// GET /api/auth/discord/callback
-router.get('/discord/callback', async (req, res) => {
-  const code = req.query.code;
-  const clientId = process.env.DISCORD_CLIENT_ID;
-  const clientSecret = process.env.DISCORD_CLIENT_SECRET;
-  const redirect = process.env.DISCORD_REDIRECT_URI;
+// POST /api/auth/discord/link-url — returns OAuth URL for linking Discord to current user
+router.post('/discord/link-url', requireAuth, async (req, res) => {
+  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
+    return res.status(503).json({ success: false, error: 'Discord OAuth не настроен' });
+  }
+  const state = buildState('link', req.user.id);
+  res.json({ success: true, url: discordAuthUrl(state) });
+});
 
-  if (!code || !clientId || !clientSecret) {
-    return res.status(400).send('Missing code or config');
+// POST /api/auth/discord/unlink — remove Discord binding from current user
+router.post('/discord/unlink', requireAuth, async (req, res) => {
+  try {
+    const u = await db.queryOne('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    if (!u) return res.status(404).json({ success: false, error: 'User not found' });
+    if (!u.password_hash) {
+      return res.status(400).json({
+        success: false,
+        error: 'Нельзя отвязать Discord: у вас не задан пароль. Сначала установите пароль для входа без Discord.',
+      });
+    }
+    await db.query(
+      'UPDATE users SET discord_id = NULL, avatar_url = CASE WHEN avatar_url LIKE ? THEN NULL ELSE avatar_url END WHERE id = ?',
+      ['https://cdn.discordapp.com/%', req.user.id]
+    );
+    const updated = await db.queryOne('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    res.json({ success: true, user: userPublic(updated) });
+  } catch (err) {
+    console.error('Discord unlink error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/auth/discord/callback — handles both login and link flows
+router.get('/discord/callback', async (req, res) => {
+  const { code, state } = req.query;
+  if (!code) return res.redirect('/login.html?error=' + encodeURIComponent('Нет кода авторизации'));
+
+  let dUser;
+  try {
+    dUser = await exchangeCodeForUser(code);
+  } catch (err) {
+    console.error('Discord exchange error:', err);
+    return res.redirect('/login.html?error=' + encodeURIComponent(err.message));
   }
 
+  const parsed = parseState(state);
+  const avatar = discordAvatarUrl(dUser.id, dUser.avatar);
+
   try {
-    const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: redirect,
-      }),
-    });
-    const tokens = await tokenRes.json();
-    if (!tokens.access_token) {
-      return res.status(400).send('Discord token exchange failed');
-    }
-
-    const meRes = await fetch('https://discord.com/api/users/@me', {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    });
-    const dUser = await meRes.json();
-
-    let user = await db.queryOne('SELECT * FROM users WHERE discord_id = ?', [dUser.id]);
-    if (!user) {
-      const email = dUser.email || `${dUser.id}@discord.local`;
-      const username = dUser.username || `user_${dUser.id}`;
-      const avatar = dUser.avatar
-        ? `https://cdn.discordapp.com/avatars/${dUser.id}/${dUser.avatar}.png`
-        : null;
-      const result = await db.query(
-        'INSERT INTO users (email, username, discord_id, avatar_url, role) VALUES (?, ?, ?, ?, ?)',
-        [email, username, dUser.id, avatar, 'user']
+    // LINK flow: bind Discord to an existing logged-in user
+    if (parsed.kind === 'link' && parsed.userId) {
+      const targetUser = await db.queryOne('SELECT * FROM users WHERE id = ?', [parsed.userId]);
+      if (!targetUser) {
+        return res.redirect('/cabinet.html?discord=error&reason=' + encodeURIComponent('Пользователь не найден'));
+      }
+      // Check if this discord_id is already linked to someone else
+      const existing = await db.queryOne(
+        'SELECT id FROM users WHERE discord_id = ? AND id != ?',
+        [dUser.id, parsed.userId]
       );
-      user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
+      if (existing) {
+        return res.redirect('/cabinet.html?discord=error&reason=' + encodeURIComponent('Этот Discord уже привязан к другому аккаунту'));
+      }
+      await db.query(
+        'UPDATE users SET discord_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+        [dUser.id, avatar, parsed.userId]
+      );
+      return res.redirect('/cabinet.html?discord=linked');
     }
 
+    // LOGIN / REGISTER flow
+    let user = await db.queryOne('SELECT * FROM users WHERE discord_id = ?', [dUser.id]);
+
+    if (!user) {
+      // Discord not linked yet — check by email
+      const discordEmail = dUser.email || `${dUser.id}@discord.local`;
+      const byEmail = dUser.email
+        ? await db.queryOne('SELECT * FROM users WHERE email = ?', [dUser.email])
+        : null;
+
+      if (byEmail) {
+        if (byEmail.discord_id && byEmail.discord_id !== dUser.id) {
+          return res.redirect('/login.html?error=' + encodeURIComponent('Этот email уже привязан к другому Discord'));
+        }
+        // Auto-link Discord to existing email-based account
+        await db.query(
+          'UPDATE users SET discord_id = ?, avatar_url = COALESCE(avatar_url, ?) WHERE id = ?',
+          [dUser.id, avatar, byEmail.id]
+        );
+        user = await db.queryOne('SELECT * FROM users WHERE id = ?', [byEmail.id]);
+      } else {
+        // Create brand-new account
+        const username = (dUser.username || `user_${dUser.id}`).slice(0, 100);
+        const result = await db.query(
+          `INSERT INTO users (email, username, discord_id, avatar_url, role, terms_accepted_at, terms_version)
+           VALUES (?, ?, ?, ?, ?, NOW(), ?)`,
+          [discordEmail, username, dUser.id, avatar, 'user', TERMS_VERSION]
+        );
+        user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
+      }
+    } else {
+      // Update avatar to latest Discord one if user didn't customize
+      if (avatar && (!user.avatar_url || user.avatar_url.includes('cdn.discordapp.com'))) {
+        await db.query('UPDATE users SET avatar_url = ? WHERE id = ?', [avatar, user.id]);
+        user.avatar_url = avatar;
+      }
+    }
+
+    await db.query('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
     const token = signToken(user);
-    res.redirect(`/auth-success.html?token=${encodeURIComponent(token)}`);
+    res.redirect(`/login.html?token=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error('Discord callback error:', err);
-    res.status(500).send('Discord auth failed');
+    res.redirect('/login.html?error=' + encodeURIComponent(err.message));
   }
 });
 

@@ -37,8 +37,10 @@
     setupActions();
     setupProfile();
     setupPassword();
+    setupDiscord();
     setupDownloads();
     await loadData();
+    handleDiscordReturnParams();
   }
 
   function renderHeader() {
@@ -201,6 +203,105 @@
   function showPassSuccess(msg) {
     $('pass-success').textContent = msg;
     $('pass-success').classList.add('visible');
+  }
+
+  // ============================================================
+  // Discord linking
+  // ============================================================
+  function setupDiscord() {
+    renderDiscordStatus();
+
+    $('btn-link-discord').addEventListener('click', async () => {
+      const btn = $('btn-link-discord');
+      btn.disabled = true;
+      btn.textContent = 'Открываем Discord...';
+      try {
+        const data = await window.GosClient.auth.discordLinkUrl();
+        if (data && data.success && data.url) {
+          location.href = data.url;
+        } else {
+          toast('Ошибка: ' + (data?.error || 'нет URL'));
+          btn.disabled = false;
+          btn.textContent = 'Привязать';
+        }
+      } catch (err) {
+        toast('Ошибка: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = 'Привязать';
+      }
+    });
+
+    $('btn-unlink-discord').addEventListener('click', async () => {
+      if (!confirm('Отвязать Discord от вашего аккаунта?')) return;
+      const btn = $('btn-unlink-discord');
+      btn.disabled = true;
+      try {
+        const data = await window.GosClient.auth.discordUnlink();
+        if (data && data.success) {
+          State.user = data.user;
+          window.GosClient.setUser(data.user);
+          renderHeader();
+          renderDiscordStatus();
+          toast('Discord отвязан');
+        } else {
+          toast('Ошибка: ' + (data?.error || 'не удалось'));
+        }
+      } catch (err) {
+        toast('Ошибка: ' + err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
+  function renderDiscordStatus() {
+    const status = $('discord-status');
+    const linkBtn = $('btn-link-discord');
+    const unlinkBtn = $('btn-unlink-discord');
+    const linked = !!(State.user && State.user.discordId);
+    if (linked) {
+      status.textContent = `Привязан · ID: ${State.user.discordId}`;
+      status.style.color = 'var(--success)';
+      linkBtn.classList.add('hidden');
+      unlinkBtn.classList.remove('hidden');
+    } else {
+      status.textContent = 'Не привязан';
+      status.style.color = 'var(--text-muted)';
+      linkBtn.classList.remove('hidden');
+      unlinkBtn.classList.add('hidden');
+    }
+  }
+
+  async function handleDiscordReturnParams() {
+    const params = new URLSearchParams(location.search);
+    const discordParam = params.get('discord');
+    if (!discordParam) return;
+    history.replaceState({}, '', location.pathname + '#security');
+
+    // Switch to security tab so user sees the result
+    document.querySelectorAll('.cabinet-tab').forEach((t) => {
+      t.classList.toggle('active', t.dataset.tab === 'security');
+    });
+    document.querySelectorAll('.cabinet-panel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.panel === 'security');
+      p.classList.toggle('hidden', p.dataset.panel !== 'security');
+    });
+
+    if (discordParam === 'linked') {
+      // Re-fetch user to get updated discord_id
+      try {
+        const me = await window.GosClient.auth.me();
+        if (me && me.success) {
+          State.user = me.user;
+          window.GosClient.setUser(me.user);
+          renderHeader();
+          renderDiscordStatus();
+        }
+      } catch {}
+      toast('Discord успешно привязан');
+    } else if (discordParam === 'error') {
+      toast('Ошибка: ' + (params.get('reason') || 'не удалось привязать Discord'));
+    }
   }
 
   // ============================================================

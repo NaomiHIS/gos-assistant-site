@@ -85,6 +85,8 @@
       updateProfile: (data) => request('PUT', '/auth/me', data),
       changePassword: (currentPassword, newPassword) =>
         request('POST', '/auth/change-password', { currentPassword, newPassword }),
+      discordLinkUrl: () => request('POST', '/auth/discord/link-url'),
+      discordUnlink: () => request('POST', '/auth/discord/unlink'),
     },
 
     servers: {

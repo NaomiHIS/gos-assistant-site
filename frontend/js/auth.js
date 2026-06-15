@@ -12,12 +12,18 @@
   const switchText = $('switch-text');
   const switchLink = $('switch-link');
 
-  // Check ?mode=register or ?token (Discord callback)
+  // Check ?mode=register or ?token (Discord callback) or ?error=...
   const params = new URLSearchParams(location.search);
   const token = params.get('token');
+  const errParam = params.get('error');
   if (token) {
     handleDiscordReturn(token);
     return;
+  }
+  if (errParam) {
+    setTimeout(() => showError(errParam), 50);
+    // Clean URL so error doesn't persist on refresh
+    history.replaceState({}, '', location.pathname);
   }
 
   let mode = params.get('mode') === 'register' ? 'register' : 'login';
