@@ -81,6 +81,7 @@
     if (name === 'users') loadAndRenderUsers();
     if (name === 'parser') initParserView();
     if (name === 'releases') initReleasesView();
+    if (name === 'donate') initDonateView();
   }
 
   // ============================================================
@@ -105,6 +106,10 @@
     if (name === 'server') prepareServerModal(data);
     if (name === 'category') prepareCategoryModal(data);
     if (name === 'article') prepareArticleModal(data);
+    if (name === 'donate') {
+      openDonateModal(data);
+      return;
+    }
     document.getElementById('modal-' + name).classList.add('open');
   }
 
@@ -1082,6 +1087,144 @@
     if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
     if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
     return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  }
+
+  // ============================================================
+  // Donate links admin
+  // ============================================================
+  const DonateState = { initialized: false, list: [], editingId: null };
+
+  function initDonateView() {
+    loadDonateList();
+    if (DonateState.initialized) return;
+    DonateState.initialized = true;
+
+    // Hook into existing modal system: data-modal="donate" already wired in setupModals
+    // Just need the save button
+    $('dn-save').addEventListener('click', saveDonateLink);
+  }
+
+  async function loadDonateList() {
+    const tbody = $('donate-table');
+    tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:20px">Загрузка...</td></tr>';
+    try {
+      const data = await window.GosClient.donate.listAll();
+      DonateState.list = data.links || [];
+      renderDonateTable();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderDonateTable() {
+    const tbody = $('donate-table');
+    if (!DonateState.list.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:30px">Ссылок пока нет — добавьте первую</td></tr>';
+      return;
+    }
+    tbody.innerHTML = DonateState.list.map((link) => `
+      <tr>
+        <td><div style="width:24px;height:24px;border-radius:6px;background:${escapeHtml(link.color)}"></div></td>
+        <td>
+          <div class="font-medium text-sm">${escapeHtml(link.title)}</div>
+          ${link.description ? `<div class="text-xs text-muted">${escapeHtml(link.description)}</div>` : ''}
+        </td>
+        <td><a href="${escapeHtml(link.url)}" target="_blank" rel="noopener" class="text-xs" style="color: var(--accent-primary); word-break: break-all;">${escapeHtml(link.url.length > 40 ? link.url.slice(0, 40) + '…' : link.url)}</a></td>
+        <td style="font-size: 16px;">${escapeHtml(link.icon || '—')}</td>
+        <td>${link.clickCount || 0}</td>
+        <td>
+          <label class="switch" style="width:36px;height:20px;">
+            <input type="checkbox" data-donate-toggle="${link.id}" ${link.isActive ? 'checked' : ''} />
+            <span class="switch-slider"></span>
+          </label>
+        </td>
+        <td>
+          <div class="actions-row">
+            <button class="icon-btn" data-donate-edit="${link.id}" title="Редактировать">✎</button>
+            <button class="icon-btn danger" data-donate-del="${link.id}" title="Удалить">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-donate-toggle]').forEach((cb) => {
+      cb.addEventListener('change', async () => {
+        const link = DonateState.list.find((l) => String(l.id) === cb.dataset.donateToggle);
+        if (!link) return;
+        try {
+          await window.GosClient.donate.update(link.id, { ...link, isActive: cb.checked });
+          toast(cb.checked ? 'Ссылка активирована' : 'Ссылка скрыта');
+          link.isActive = cb.checked;
+        } catch (err) {
+          toast('Ошибка: ' + err.message);
+          cb.checked = !cb.checked;
+        }
+      });
+    });
+    tbody.querySelectorAll('[data-donate-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const link = DonateState.list.find((l) => String(l.id) === btn.dataset.donateEdit);
+        if (link) openDonateModal(link);
+      });
+    });
+    tbody.querySelectorAll('[data-donate-del]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить эту ссылку?')) return;
+        try {
+          await window.GosClient.donate.remove(btn.dataset.donateDel);
+          await loadDonateList();
+          toast('Удалено');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+  }
+
+  function openDonateModal(link) {
+    DonateState.editingId = link ? link.id : null;
+    $('modal-donate-title').textContent = link ? 'Редактирование ссылки' : 'Новая ссылка';
+    $('dn-title').value = link?.title || '';
+    $('dn-url').value = link?.url || '';
+    $('dn-desc').value = link?.description || '';
+    $('dn-icon').value = link?.icon || '';
+    $('dn-color').value = link?.color || '#DF005B';
+    $('dn-order').value = link?.sortOrder || 0;
+    document.getElementById('modal-donate').classList.add('open');
+  }
+
+  async function saveDonateLink() {
+    const payload = {
+      title: $('dn-title').value.trim(),
+      url: $('dn-url').value.trim(),
+      description: $('dn-desc').value.trim(),
+      icon: $('dn-icon').value.trim(),
+      color: $('dn-color').value.trim() || '#DF005B',
+      sortOrder: parseInt($('dn-order').value, 10) || 0,
+      isActive: true,
+    };
+    if (!payload.title || !payload.url) {
+      toast('Введите название и URL');
+      return;
+    }
+    if (!/^https?:\/\//i.test(payload.url)) {
+      toast('URL должен начинаться с http:// или https://');
+      return;
+    }
+    const btn = $('dn-save');
+    btn.disabled = true;
+    try {
+      if (DonateState.editingId) {
+        await window.GosClient.donate.update(DonateState.editingId, payload);
+      } else {
+        await window.GosClient.donate.create(payload);
+      }
+      document.getElementById('modal-donate').classList.remove('open');
+      await loadDonateList();
+      toast('Сохранено');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   // Start

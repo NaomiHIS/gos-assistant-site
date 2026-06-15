@@ -122,6 +122,14 @@
       setRole: (id, role) => request('PUT', '/users/' + id + '/role', { role }),
       remove: (id) => request('DELETE', '/users/' + id),
     },
+
+    donate: {
+      list: () => request('GET', '/donate'),
+      listAll: () => request('GET', '/donate/all'),
+      create: (data) => request('POST', '/donate', data),
+      update: (id, data) => request('PUT', '/donate/' + id, data),
+      remove: (id) => request('DELETE', '/donate/' + id),
+    },
   };
 
   // Toast helper

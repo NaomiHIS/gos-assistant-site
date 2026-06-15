@@ -62,6 +62,56 @@
     })
     .catch(() => {});
 
+  // Load donate links
+  fetch(window.GosClient.API_BASE + '/donate')
+    .then((r) => r.json())
+    .then((data) => {
+      if (!data || !data.success || !Array.isArray(data.links) || data.links.length === 0) return;
+      const section = document.getElementById('donate-section');
+      const list = document.getElementById('donate-list');
+      const navDonate = document.getElementById('nav-donate');
+      if (!section || !list) return;
+      section.style.display = 'block';
+      if (navDonate) navDonate.style.display = '';
+      list.innerHTML = data.links.map((link) => `
+        <a href="${escapeAttr(link.url)}" target="_blank" rel="noopener noreferrer" class="feature-card donate-card" data-id="${link.id}" style="--accent: ${escapeAttr(link.color || '#DF005B')}">
+          <div class="feature-icon" style="background: ${rgbaFromHex(link.color || '#DF005B', 0.12)}; color: ${escapeAttr(link.color || '#DF005B')}">
+            ${link.icon ? `<span style="font-size: 22px;">${escapeHtml(link.icon)}</span>` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>`}
+          </div>
+          <div class="feature-title">${escapeHtml(link.title)}</div>
+          ${link.description ? `<div class="feature-desc">${escapeHtml(link.description)}</div>` : ''}
+        </a>
+      `).join('');
+
+      list.querySelectorAll('.donate-card').forEach((card) => {
+        card.addEventListener('click', () => {
+          const id = card.dataset.id;
+          // Fire and forget — don't block navigation
+          fetch(window.GosClient.API_BASE + '/donate/' + id + '/click', { method: 'POST' }).catch(() => {});
+        });
+      });
+    })
+    .catch(() => {});
+
+  function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function escapeAttr(str) {
+    return escapeHtml(str);
+  }
+
+  function rgbaFromHex(hex, alpha) {
+    const h = String(hex || '').replace('#', '');
+    if (h.length !== 6) return `rgba(223,0,91,${alpha})`;
+    const r = parseInt(h.substr(0, 2), 16);
+    const g = parseInt(h.substr(2, 2), 16);
+    const b = parseInt(h.substr(4, 2), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
   // Smooth scroll for anchor links
   document.querySelectorAll('a[href^="#"]').forEach((link) => {
     link.addEventListener('click', (e) => {

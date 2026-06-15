@@ -119,6 +119,23 @@ CREATE TABLE IF NOT EXISTS releases (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- Donate links: admin-managed list of donation URLs
+-- ============================================================
+CREATE TABLE IF NOT EXISTS donate_links (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  title VARCHAR(255) NOT NULL,
+  url VARCHAR(500) NOT NULL,
+  description VARCHAR(500) NULL,
+  icon VARCHAR(50) NULL,
+  color VARCHAR(16) NULL DEFAULT '#DF005B',
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  click_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ============================================================
 -- Sync state: per-source/file last imported timestamp
 -- Used to detect when alamantik/majestic-laws-db has fresh data
 -- ============================================================
