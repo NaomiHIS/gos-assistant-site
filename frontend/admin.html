@@ -49,6 +49,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
           <span>Донат</span>
         </div>
+        <div class="admin-nav-item" data-view="devlog">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <span>DevLog</span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -215,6 +219,33 @@
               </tr>
             </thead>
             <tbody id="donate-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- DEVLOG -->
+      <div class="view hidden" data-view="devlog">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">DevLog — журнал изменений</div>
+            <div class="admin-subtitle">Публикуйте обновления, новости и исправления для пользователей</div>
+          </div>
+          <button class="btn btn-primary" data-modal="devlog">+ Новая запись</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th style="width: 80px;">Версия</th>
+                <th>Заголовок</th>
+                <th style="width: 100px;">Тег</th>
+                <th style="width: 150px;">Дата</th>
+                <th style="width: 80px;">Опубл.</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="devlog-table"></tbody>
           </table>
         </div>
       </div>
@@ -477,6 +508,53 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close>Отмена</button>
         <button class="btn btn-primary" id="art-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DevLog modal -->
+  <div class="modal-backdrop" id="modal-devlog">
+    <div class="modal" style="max-width: 640px;">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-devlog-title">Новая запись DevLog</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="flex gap-3">
+          <div class="input-group" style="max-width: 160px;">
+            <label class="input-label">Версия (опц.)</label>
+            <input type="text" class="input" id="dl-version" placeholder="1.0.3" />
+          </div>
+          <div class="input-group" style="max-width: 180px;">
+            <label class="input-label">Тег</label>
+            <select class="input select" id="dl-tag">
+              <option value="">— без тега —</option>
+              <option value="feature">Новое</option>
+              <option value="fix">Исправление</option>
+              <option value="news">Новость</option>
+              <option value="major">Важно</option>
+            </select>
+          </div>
+          <div class="input-group flex-1">
+            <label class="input-label">Опубликовано</label>
+            <label class="switch" style="margin-top: 8px;">
+              <input type="checkbox" id="dl-published" checked />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="input-group">
+          <label class="input-label">Заголовок</label>
+          <input type="text" class="input" id="dl-title" placeholder="Что произошло" />
+        </div>
+        <div class="input-group">
+          <label class="input-label">Содержимое</label>
+          <textarea class="input textarea" id="dl-content" rows="8" placeholder="Подробности — можно несколько абзацев"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="dl-save">Сохранить</button>
       </div>
     </div>
   </div>

@@ -31,12 +31,19 @@ function signState(payload) {
     .slice(0, 16);
 }
 
-function buildState(kind, userId) {
-  // For login: just a random nonce; for link: kind:userId:hmac
+function buildState(kind, userIdOrCallback) {
   if (kind === 'login') {
     return 'login:' + crypto.randomBytes(8).toString('hex');
   }
-  return `link:${userId}:${signState('link:' + userId)}`;
+  if (kind === 'link') {
+    return `link:${userIdOrCallback}:${signState('link:' + userIdOrCallback)}`;
+  }
+  if (kind === 'app') {
+    // app:base64(callback_url):hmac — callback is e.g. http://127.0.0.1:PORT/?state=NONCE
+    const b64 = Buffer.from(String(userIdOrCallback), 'utf-8').toString('base64url');
+    return `app:${b64}:${signState('app:' + b64)}`;
+  }
+  return 'login:' + crypto.randomBytes(8).toString('hex');
 }
 
 function parseState(state) {
@@ -46,6 +53,19 @@ function parseState(state) {
     const userId = parseInt(parts[1], 10);
     if (signState('link:' + userId) === parts[2]) {
       return { kind: 'link', userId };
+    }
+  }
+  if (parts[0] === 'app' && parts.length === 3) {
+    const b64 = parts[1];
+    if (signState('app:' + b64) === parts[2]) {
+      try {
+        const callbackUrl = Buffer.from(b64, 'base64url').toString('utf-8');
+        // Strict allowlist — only 127.0.0.1 / localhost callbacks
+        const u = new URL(callbackUrl);
+        if (u.hostname === '127.0.0.1' || u.hostname === 'localhost') {
+          return { kind: 'app', callbackUrl };
+        }
+      } catch {}
     }
   }
   return { kind: 'login' };
@@ -262,11 +282,28 @@ router.get('/discord/status', (req, res) => {
   });
 });
 
-// GET /api/auth/discord — start OAuth flow for LOGIN (anonymous users)
+// GET /api/auth/discord — start OAuth flow for LOGIN
+//   ?app_callback=http://127.0.0.1:PORT/?state=NONCE → Electron app flow
+//   (no param) → web flow
 router.get('/discord', (req, res) => {
   const err = discordConfigError();
   if (err) return res.status(503).send(err);
-  const state = buildState('login');
+
+  const appCallback = req.query.app_callback;
+  let state;
+  if (appCallback) {
+    try {
+      const u = new URL(appCallback);
+      if (u.hostname !== '127.0.0.1' && u.hostname !== 'localhost') {
+        return res.status(400).send('app_callback must point to 127.0.0.1');
+      }
+      state = buildState('app', appCallback);
+    } catch {
+      return res.status(400).send('Invalid app_callback');
+    }
+  } else {
+    state = buildState('login');
+  }
   res.redirect(discordAuthUrl(state));
 });
 
@@ -379,6 +416,38 @@ router.get('/discord/callback', async (req, res) => {
 
     await db.query('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
     const token = signToken(user);
+
+    // Electron app flow — redirect to local server with token, plus show a friendly page
+    if (parsed.kind === 'app' && parsed.callbackUrl) {
+      const sep = parsed.callbackUrl.includes('?') ? '&' : '?';
+      const target = parsed.callbackUrl + sep + 'token=' + encodeURIComponent(token);
+      // Show interstitial — auto-redirects and instructs to close tab
+      const html = `<!DOCTYPE html><html lang="ru"><head>
+<meta charset="UTF-8"/><title>Вход выполнен — GOS Assistant</title>
+<style>
+body{margin:0;font-family:-apple-system,Segoe UI,sans-serif;background:#0F0F0F;color:#FFF;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:20px}
+.card{max-width:420px;background:#1A1A1A;border:1px solid #2A2A2A;border-radius:16px;padding:32px}
+.icon{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#10B981,#06B6D4);margin:0 auto 18px;display:flex;align-items:center;justify-content:center;font-size:28px}
+h1{font-size:20px;margin:0 0 8px;font-weight:700}
+p{color:#B0B0B0;font-size:14px;line-height:1.5;margin:6px 0}
+small{color:#707070;font-size:12px;display:block;margin-top:14px}
+</style></head><body>
+<div class="card">
+  <div class="icon">✓</div>
+  <h1>Вход в GOS Assistant выполнен</h1>
+  <p>Возвращаемся в приложение...</p>
+  <small>Если приложение не открылось — закройте эту вкладку и вернитесь к нему вручную.</small>
+</div>
+<script>
+  setTimeout(function(){
+    location.replace(${JSON.stringify(target)});
+    setTimeout(function(){ try { window.close(); } catch(e){} }, 1500);
+  }, 300);
+</script>
+</body></html>`;
+      return res.type('html').send(html);
+    }
+
     res.redirect(`/login.html?token=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error('Discord callback error:', err);

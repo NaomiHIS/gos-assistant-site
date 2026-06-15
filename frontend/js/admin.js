@@ -82,6 +82,7 @@
     if (name === 'parser') initParserView();
     if (name === 'releases') initReleasesView();
     if (name === 'donate') initDonateView();
+    if (name === 'devlog') initDevlogView();
   }
 
   // ============================================================
@@ -108,6 +109,10 @@
     if (name === 'article') prepareArticleModal(data);
     if (name === 'donate') {
       openDonateModal(data);
+      return;
+    }
+    if (name === 'devlog') {
+      openDevlogModal(data);
       return;
     }
     document.getElementById('modal-' + name).classList.add('open');
@@ -1219,6 +1224,140 @@
       }
       document.getElementById('modal-donate').classList.remove('open');
       await loadDonateList();
+      toast('Сохранено');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ============================================================
+  // DevLog admin
+  // ============================================================
+  const DevlogState = { initialized: false, list: [], editingId: null };
+
+  function initDevlogView() {
+    loadDevlogList();
+    if (DevlogState.initialized) return;
+    DevlogState.initialized = true;
+    $('dl-save').addEventListener('click', saveDevlogEntry);
+  }
+
+  async function loadDevlogList() {
+    const tbody = $('devlog-table');
+    tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:20px">Загрузка...</td></tr>';
+    try {
+      const data = await window.GosClient.devlog.listAll();
+      DevlogState.list = data.entries || [];
+      renderDevlogTable();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function tagBadge(tag) {
+    if (!tag) return '<span class="badge badge-muted">—</span>';
+    const labels = { feature: ['Новое', 'badge-success'], fix: ['Фикс', 'badge-warning'], news: ['Новость', 'badge-primary'], major: ['Важно', 'badge-danger'] };
+    const [label, cls] = labels[tag] || [tag, 'badge-muted'];
+    return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+  }
+
+  function renderDevlogTable() {
+    const tbody = $('devlog-table');
+    if (!DevlogState.list.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-muted" style="text-align:center;padding:30px">Записей нет — добавьте первую</td></tr>';
+      return;
+    }
+    tbody.innerHTML = DevlogState.list.map((e) => `
+      <tr>
+        <td>${e.version ? `<code>v${escapeHtml(e.version)}</code>` : '<span class="text-muted">—</span>'}</td>
+        <td>
+          <div class="font-medium text-sm">${escapeHtml(e.title)}</div>
+          <div class="text-xs text-muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px">${escapeHtml((e.content || '').slice(0, 120))}</div>
+        </td>
+        <td>${tagBadge(e.tag)}</td>
+        <td class="text-xs text-muted">${formatDate(e.publishedAt || e.createdAt)}</td>
+        <td>
+          <label class="switch" style="width:36px;height:20px;">
+            <input type="checkbox" data-devlog-toggle="${e.id}" ${e.isPublished ? 'checked' : ''} />
+            <span class="switch-slider"></span>
+          </label>
+        </td>
+        <td>
+          <div class="actions-row">
+            <button class="icon-btn" data-devlog-edit="${e.id}">✎</button>
+            <button class="icon-btn danger" data-devlog-del="${e.id}">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-devlog-toggle]').forEach((cb) => {
+      cb.addEventListener('change', async () => {
+        const entry = DevlogState.list.find((x) => String(x.id) === cb.dataset.devlogToggle);
+        if (!entry) return;
+        try {
+          await window.GosClient.devlog.update(entry.id, { ...entry, isPublished: cb.checked });
+          toast(cb.checked ? 'Опубликовано' : 'Снято с публикации');
+          entry.isPublished = cb.checked;
+        } catch (err) {
+          toast('Ошибка: ' + err.message);
+          cb.checked = !cb.checked;
+        }
+      });
+    });
+    tbody.querySelectorAll('[data-devlog-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const entry = DevlogState.list.find((x) => String(x.id) === btn.dataset.devlogEdit);
+        if (entry) openDevlogModal(entry);
+      });
+    });
+    tbody.querySelectorAll('[data-devlog-del]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить запись?')) return;
+        try {
+          await window.GosClient.devlog.remove(btn.dataset.devlogDel);
+          await loadDevlogList();
+          toast('Удалено');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+  }
+
+  function openDevlogModal(entry) {
+    DevlogState.editingId = entry ? entry.id : null;
+    $('modal-devlog-title').textContent = entry ? 'Редактирование записи' : 'Новая запись DevLog';
+    $('dl-version').value = entry?.version || '';
+    $('dl-tag').value = entry?.tag || '';
+    $('dl-title').value = entry?.title || '';
+    $('dl-content').value = entry?.content || '';
+    $('dl-published').checked = entry ? !!entry.isPublished : true;
+    document.getElementById('modal-devlog').classList.add('open');
+  }
+
+  async function saveDevlogEntry() {
+    const payload = {
+      version: $('dl-version').value.trim(),
+      tag: $('dl-tag').value,
+      title: $('dl-title').value.trim(),
+      content: $('dl-content').value.trim(),
+      isPublished: $('dl-published').checked,
+    };
+    if (!payload.title || !payload.content) {
+      toast('Заголовок и содержимое обязательны');
+      return;
+    }
+    const btn = $('dl-save');
+    btn.disabled = true;
+    try {
+      if (DevlogState.editingId) {
+        await window.GosClient.devlog.update(DevlogState.editingId, payload);
+      } else {
+        await window.GosClient.devlog.create(payload);
+      }
+      document.getElementById('modal-devlog').classList.remove('open');
+      await loadDevlogList();
       toast('Сохранено');
     } catch (err) {
       toast('Ошибка: ' + err.message);

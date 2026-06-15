@@ -121,6 +121,24 @@ CREATE TABLE IF NOT EXISTS releases (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- DevLog: changelog entries (news, updates, features)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS devlog_entries (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  version VARCHAR(32) NULL,
+  title VARCHAR(255) NOT NULL,
+  content TEXT NOT NULL,
+  tag VARCHAR(32) NULL,
+  is_published TINYINT(1) NOT NULL DEFAULT 1,
+  published_at TIMESTAMP NULL,
+  created_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_published (is_published, published_at)
+) ENGINE=InnoDB;
+
+-- ============================================================
 -- Donate links: admin-managed list of donation URLs
 -- ============================================================
 CREATE TABLE IF NOT EXISTS donate_links (

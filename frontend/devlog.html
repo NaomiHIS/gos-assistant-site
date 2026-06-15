@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DevLog — GOS Assistant</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <style>
+    .devlog-page {
+      max-width: 760px;
+      margin: 40px auto 80px;
+      padding: 0 24px;
+    }
+    .devlog-page h1 {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .devlog-subtitle {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 36px;
+    }
+    .devlog-entry {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 22px 26px;
+      margin-bottom: 14px;
+      transition: border-color 0.15s;
+    }
+    .devlog-entry:hover { border-color: var(--border-color-light); }
+    .devlog-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .devlog-version {
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+      padding: 3px 9px;
+      border-radius: 5px;
+    }
+    .devlog-tag {
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tag-feature { background: rgba(16,185,129,0.12); color: var(--success); }
+    .tag-fix     { background: rgba(245,158,11,0.12); color: var(--warning); }
+    .tag-news    { background: rgba(0,112,243,0.12);  color: var(--info); }
+    .tag-major   { background: rgba(239,68,68,0.12);  color: var(--danger); }
+    .devlog-date {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+    .devlog-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .devlog-content {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+    }
+    .devlog-empty {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="brand">
+        <div class="brand-icon">GA</div>
+        <span>GOS Assistant</span>
+      </a>
+      <div class="nav-links">
+        <a href="/" class="nav-link">Главная</a>
+        <a href="/devlog.html" class="nav-link" style="color: var(--text-primary);">DevLog</a>
+        <a href="/login.html" class="nav-link" data-auth="guest">Войти</a>
+        <a href="/cabinet.html" class="nav-link hidden" data-auth="user">Личный кабинет</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="devlog-page">
+    <h1>DevLog</h1>
+    <div class="devlog-subtitle">Новости, обновления и изменения GOS Assistant</div>
+    <div id="devlog-list">
+      <div class="devlog-empty">Загрузка...</div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div>© 2026 GOS Assistant</div>
+      <div class="flex gap-4">
+        <a href="/terms.html" class="text-sm">Условия использования</a>
+        <a href="/privacy.html" class="text-sm">Политика конфиденциальности</a>
+        <a href="/" class="text-sm">Главная</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/api.js"></script>
+  <script src="js/devlog.js"></script>
+</body>
+</html>

@@ -132,6 +132,14 @@
       update: (id, data) => request('PUT', '/donate/' + id, data),
       remove: (id) => request('DELETE', '/donate/' + id),
     },
+
+    devlog: {
+      list: (limit) => request('GET', '/devlog' + (limit ? '?limit=' + limit : '')),
+      listAll: () => request('GET', '/devlog/all'),
+      create: (data) => request('POST', '/devlog', data),
+      update: (id, data) => request('PUT', '/devlog/' + id, data),
+      remove: (id) => request('DELETE', '/devlog/' + id),
+    },
   };
 
   // Toast helper
