@@ -2,7 +2,33 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { parseUrl, parseRawText } = require('../parsers');
+const { parseUrl, parseRawText, codexdb } = require('../parsers');
+
+// GET /api/parser/codexdb/servers — список доступных серверов в codex-db
+router.get('/codexdb/servers', requireAuth, requireRole('admin'), async (req, res) => {
+  res.json({ success: true, servers: codexdb.listServers() });
+});
+
+// POST /api/parser/codexdb/preview { serverFile, categoryFilter? }
+router.post('/codexdb/preview', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { serverFile, categoryFilter } = req.body || {};
+    if (!serverFile) return res.status(400).json({ error: 'serverFile обязателен' });
+    const { articles, updatedAt } = await codexdb.loadServer(serverFile, categoryFilter);
+    res.json({
+      success: true,
+      parser: 'codex-db',
+      url: null,
+      detectedCategory: null,
+      articlesCount: articles.length,
+      articles,
+      updatedAt,
+    });
+  } catch (err) {
+    console.error('CodexDB load error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // POST /api/parser/preview { url } — fetch and parse, return preview
 router.post('/preview', requireAuth, requireRole('admin'), async (req, res) => {

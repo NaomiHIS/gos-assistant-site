@@ -502,10 +502,74 @@
       if (e.key === 'Enter') doParse({ url: $('parser-url').value.trim() });
     });
 
+    $('btn-codexdb-load').addEventListener('click', doCodexDbLoad);
+    loadCodexDbServers();
+
     $('btn-parser-import').addEventListener('click', doImport);
     $('btn-parser-select-all').addEventListener('click', () => toggleAllParser(true));
     $('btn-parser-deselect-all').addEventListener('click', () => toggleAllParser(false));
     $('parser-check-all').addEventListener('change', (e) => toggleAllParser(e.target.checked));
+  }
+
+  async function loadCodexDbServers() {
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/parser/codexdb/servers', {
+        headers: { 'Authorization': 'Bearer ' + window.GosClient.getToken() },
+      });
+      const data = await res.json();
+      if (data.success) {
+        const sel = $('codexdb-server');
+        sel.innerHTML = data.servers.map((s) =>
+          `<option value="${escapeHtml(s.file)}">${escapeHtml(s.name)}</option>`
+        ).join('');
+      }
+    } catch (err) {
+      console.warn('CodexDB servers load failed:', err);
+    }
+  }
+
+  async function doCodexDbLoad() {
+    const serverFile = $('codexdb-server').value;
+    if (!serverFile) {
+      setParserStatus('Выберите сервер', 'warn');
+      return;
+    }
+    setParserStatus('Загрузка из Codex-DB...', 'info');
+    $('parser-result').classList.add('hidden');
+    const btn = $('btn-codexdb-load');
+    btn.disabled = true;
+
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/parser/codexdb/preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + window.GosClient.getToken(),
+        },
+        body: JSON.stringify({ serverFile }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        setParserStatus('Ошибка: ' + (data.error || res.statusText), 'error');
+        return;
+      }
+
+      ParserState.articles = (data.articles || []).map((a) => ({ ...a, selected: true }));
+      ParserState.detectedCategory = null;
+      const dateStr = data.updatedAt
+        ? new Date(data.updatedAt).toLocaleDateString('ru-RU')
+        : 'неизвестно';
+      setParserStatus(
+        `Загружено ${data.articlesCount} статей из Codex-DB (обновлено: ${dateStr})`,
+        'success'
+      );
+      renderParserTable();
+      $('parser-result').classList.remove('hidden');
+    } catch (err) {
+      setParserStatus('Ошибка сети: ' + err.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   function populateParserSelects() {
@@ -513,7 +577,9 @@
     const catSel = $('parser-category');
     if (!srvSel || !catSel) return;
     srvSel.innerHTML = State.servers.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('');
-    catSel.innerHTML = State.categories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    catSel.innerHTML =
+      '<option value="__auto__">По типу из источника (для Codex-DB)</option>' +
+      State.categories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
   }
 
   function setParserStatus(msg, type) {
@@ -641,38 +707,67 @@
       setParserStatus('Выберите хотя бы одну статью', 'warn');
       return;
     }
-    if (mode === 'replace' &&
-      !confirm(`Все статьи в "${categoryId}" для сервера "${serverId}" будут удалены и заменены ${selected.length} новыми. Продолжить?`)) {
-      return;
+
+    // Group by category (either chosen one, or suggested per-article for __auto__)
+    const groups = {};
+    for (const a of selected) {
+      const cat = categoryId === '__auto__'
+        ? (a.suggestedCategoryId || a.categoryId || 'uk')
+        : categoryId;
+      (groups[cat] = groups[cat] || []).push(a);
     }
 
-    setParserStatus(`Импорт ${selected.length} статей...`, 'info');
+    const groupCount = Object.keys(groups).length;
+    if (mode === 'replace') {
+      const groupList = Object.entries(groups)
+        .map(([cat, arts]) => `  • ${cat}: ${arts.length} статей`)
+        .join('\n');
+      if (!confirm(
+        `Удалить все существующие статьи в категориях и заменить новыми?\n\n${groupList}\n\nСервер: ${serverId}`
+      )) return;
+    }
+
+    setParserStatus(`Импорт ${selected.length} статей в ${groupCount} категорий...`, 'info');
     const btn = $('btn-parser-import');
     btn.disabled = true;
 
     try {
-      const res = await fetch(window.GosClient.API_BASE + '/parser/import', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + window.GosClient.getToken(),
-        },
-        body: JSON.stringify({ serverId, categoryId, articles: selected, mode }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        setParserStatus('Ошибка импорта: ' + (data.error || res.statusText), 'error');
-        return;
+      let totalInserted = 0;
+      let totalRemoved = 0;
+      let totalSkipped = 0;
+      const allErrors = [];
+
+      for (const [cat, arts] of Object.entries(groups)) {
+        const res = await fetch(window.GosClient.API_BASE + '/parser/import', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + window.GosClient.getToken(),
+          },
+          body: JSON.stringify({ serverId, categoryId: cat, articles: arts, mode }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          allErrors.push(`Категория ${cat}: ${data.error || res.statusText}`);
+          continue;
+        }
+        totalInserted += data.inserted || 0;
+        totalRemoved += data.removed || 0;
+        totalSkipped += data.skipped || 0;
+        if (data.errors) allErrors.push(...data.errors);
       }
-      const parts = [`✓ Импортировано: ${data.inserted}`];
-      if (data.removed) parts.push(`удалено: ${data.removed}`);
-      if (data.skipped) parts.push(`пропущено: ${data.skipped}`);
-      setParserStatus(parts.join(' · '), 'success');
+
+      const parts = [`✓ Импортировано: ${totalInserted} в ${groupCount} категорий`];
+      if (totalRemoved) parts.push(`удалено: ${totalRemoved}`);
+      if (totalSkipped) parts.push(`пропущено: ${totalSkipped}`);
+      setParserStatus(parts.join(' · '), allErrors.length ? 'warn' : 'success');
+
       await loadAll();
       populateParserSelects();
-      if (data.errors && data.errors.length) {
+
+      if (allErrors.length) {
+        console.warn('Import errors:', allErrors);
         toast('Часть статей с ошибками — см. консоль');
-        console.warn('Import errors:', data.errors);
       } else {
         toast('Импорт завершён');
       }

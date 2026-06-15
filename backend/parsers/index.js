@@ -1,9 +1,10 @@
 // ============================================================
-// Parser orchestrator: picks the right parser by URL
+// Parser orchestrator
 // ============================================================
 const fetch = require('node-fetch');
 const generic = require('./generic');
 const majestic = require('./majestic');
+const codexdb = require('./codexdb');
 
 function pickParser(url) {
   try {
@@ -16,8 +17,8 @@ function pickParser(url) {
 async function fetchHtml(url) {
   const res = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; GOS-Assistant-Parser/1.0)',
-      'Accept': 'text/html,application/xhtml+xml',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
       'Accept-Language': 'ru,en;q=0.8',
     },
     timeout: 20000,
@@ -40,8 +41,6 @@ async function parseUrl(url) {
   const parser = pickParser(url);
   const html = await fetchHtml(url);
   const result = parser.parseHtml(html);
-
-  // Normalize: parser may return array or { articles, detectedCategory }
   let articles, detectedCategory;
   if (Array.isArray(result)) {
     articles = result;
@@ -50,7 +49,6 @@ async function parseUrl(url) {
     articles = result.articles || [];
     detectedCategory = result.detectedCategory || null;
   }
-
   return {
     parser: parser.name,
     url,
@@ -61,9 +59,14 @@ async function parseUrl(url) {
 }
 
 function parseRawText(text) {
-  // Pretend it's HTML so cheerio can wrap it
-  const html = `<div>${text.replace(/\n/g, '<br>')}</div>`;
-  return { articles: generic.parseHtml(html), detectedCategory: null };
+  const articles = generic.parseText(text);
+  return {
+    parser: 'manual-text',
+    url: null,
+    detectedCategory: null,
+    articlesCount: articles.length,
+    articles,
+  };
 }
 
-module.exports = { parseUrl, parseRawText };
+module.exports = { parseUrl, parseRawText, codexdb };
