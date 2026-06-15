@@ -37,6 +37,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           <span>Пользователи</span>
         </div>
+        <div class="admin-nav-item" data-view="parser">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
+          <span>Парсер</span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -176,6 +180,80 @@
             </thead>
             <tbody id="users-table"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- PARSER -->
+      <div class="view hidden" data-view="parser">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Парсер законодательства</div>
+            <div class="admin-subtitle">Вставьте URL — парсер извлечёт статьи и их структуру</div>
+          </div>
+        </div>
+
+        <div class="cabinet-card" style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="flex gap-3 mb-4">
+            <input type="text" class="input" id="parser-url" placeholder="https://forum.majestic-rp.ru/threads/...  или адрес страницы с законами" style="flex: 1;" />
+            <button class="btn btn-primary" id="btn-parse">Парсить</button>
+          </div>
+          <details style="margin-bottom: 12px;">
+            <summary class="text-sm text-secondary" style="cursor: pointer; user-select: none;">Или вставить текст вручную</summary>
+            <textarea class="input textarea" id="parser-raw" rows="6" placeholder="Статья 1.1 Превышение должностных полномочий&#10;Совершение должностным лицом действий...&#10;Наказание: лишение свободы до 4 лет" style="margin-top: 10px;"></textarea>
+            <button class="btn btn-secondary btn-sm mt-2" id="btn-parse-raw">Парсить текст</button>
+          </details>
+          <div class="text-xs text-muted">
+            Парсер поддерживает форумы Majestic RP и любые HTML-страницы с нумерованными статьями (формат: <code>Статья 1.1 — Название ... Наказание: ...</code>)
+          </div>
+        </div>
+
+        <div id="parser-status" class="hidden" style="padding: 12px 16px; border-radius: var(--radius-md); margin-bottom: 16px; font-size: 13px;"></div>
+
+        <div id="parser-result" class="hidden">
+          <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+            <div class="section-title">Куда импортировать</div>
+            <div class="flex gap-3 mb-4">
+              <div class="input-group flex-1">
+                <label class="input-label">Сервер</label>
+                <select class="input select" id="parser-server"></select>
+              </div>
+              <div class="input-group flex-1">
+                <label class="input-label">Категория</label>
+                <select class="input select" id="parser-category"></select>
+              </div>
+              <div class="input-group" style="max-width: 200px;">
+                <label class="input-label">Режим</label>
+                <select class="input select" id="parser-mode">
+                  <option value="add">Добавить</option>
+                  <option value="replace">Заменить категорию</option>
+                </select>
+              </div>
+            </div>
+            <div class="flex justify-between items-center">
+              <div class="text-sm text-muted" id="parser-summary">Найдено: 0</div>
+              <div class="flex gap-2">
+                <button class="btn btn-secondary btn-sm" id="btn-parser-select-all">Выбрать все</button>
+                <button class="btn btn-secondary btn-sm" id="btn-parser-deselect-all">Снять все</button>
+                <button class="btn btn-primary" id="btn-parser-import">Импортировать выбранные</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th style="width: 30px;"><input type="checkbox" id="parser-check-all" checked /></th>
+                  <th style="width: 80px;">Код</th>
+                  <th>Название</th>
+                  <th>Текст</th>
+                  <th style="width: 180px;">Наказание</th>
+                  <th style="width: 70px;">★</th>
+                </tr>
+              </thead>
+              <tbody id="parser-table"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </main>
