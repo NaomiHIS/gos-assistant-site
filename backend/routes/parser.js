@@ -336,43 +336,60 @@ router.get('/lawsdb/sync-status', requireAuth, requireRole('admin'), async (req,
   }
 });
 
-// POST /api/parser/lawsdb/import-rules — импорт правил (общие для всех серверов)
-//   body: { targetServerId, mode: 'add'|'replace' }
+// POST /api/parser/lawsdb/import-rules — импорт правил во все серверы
+//   body: { mode: 'add'|'replace', targetServerId?: string }
+//   - targetServerId опционален: если не указан — импорт во ВСЕ серверы
+//   - если указан __all__ — то же, что и не указан
 router.post('/lawsdb/import-rules', requireAuth, requireRole('admin'), async (req, res) => {
   try {
     const { targetServerId, mode } = req.body || {};
-    if (!targetServerId) return res.status(400).json({ error: 'targetServerId обязателен' });
 
-    // Verify target server exists
-    const srv = await db.queryOne('SELECT id FROM servers WHERE id = ?', [targetServerId]);
-    if (!srv) return res.status(400).json({ error: 'Сервер не найден' });
+    // Resolve list of target servers
+    let targetServers;
+    if (targetServerId && targetServerId !== '__all__') {
+      const srv = await db.queryOne('SELECT id, name FROM servers WHERE id = ?', [targetServerId]);
+      if (!srv) return res.status(400).json({ error: 'Сервер не найден' });
+      targetServers = [srv];
+    } else {
+      targetServers = await db.query('SELECT id, name FROM servers WHERE is_active = 1 ORDER BY sort_order, name');
+      if (!targetServers.length) return res.status(400).json({ error: 'Нет активных серверов. Сначала импортируйте серверы.' });
+    }
 
     const ruleFiles = await lawsdb.listRules();
     const results = [];
 
     for (const file of ruleFiles) {
       try {
+        // Load rule file ONCE
         const { articles, updatedAt } = await lawsdb.loadRulesFile(file);
-        // Group by suggestedCategoryId
         const groups = {};
         for (const a of articles) {
           const cat = a.suggestedCategoryId;
           (groups[cat] = groups[cat] || []).push(a);
         }
-        let totalForFile = 0;
-        for (const [catId, arts] of Object.entries(groups)) {
+
+        // Ensure categories exist (once per file)
+        for (const arts of Object.values(groups)) {
           if (!arts.length) continue;
-          const mapping = arts[0];
+          const m = arts[0];
           await ensureCategory({
-            id: catId,
-            name: mapping.suggestedCategoryName,
-            short_name: mapping.suggestedCategoryShort,
-            color: mapping.suggestedCategoryColor,
+            id: m.suggestedCategoryId,
+            name: m.suggestedCategoryName,
+            short_name: m.suggestedCategoryShort,
+            color: m.suggestedCategoryColor,
             type: 'rules',
           });
-          const r = await importArticles(targetServerId, catId, arts, mode);
-          results.push({ file, categoryId: catId, ...r });
-          totalForFile += r.inserted;
+        }
+
+        // Insert for every target server
+        let totalForFile = 0;
+        for (const srv of targetServers) {
+          for (const [catId, arts] of Object.entries(groups)) {
+            if (!arts.length) continue;
+            const r = await importArticles(srv.id, catId, arts, mode);
+            results.push({ file, serverId: srv.id, categoryId: catId, ...r });
+            totalForFile += r.inserted;
+          }
         }
         await recordSyncState('lawsdb', `rules/${file}`, updatedAt, totalForFile);
       } catch (e) {
@@ -386,7 +403,12 @@ router.post('/lawsdb/import-rules', requireAuth, requireRole('admin'), async (re
       skipped: acc.skipped + (r.skipped || 0),
     }), { inserted: 0, removed: 0, skipped: 0 });
 
-    res.json({ success: true, results, totals });
+    res.json({
+      success: true,
+      targetServersCount: targetServers.length,
+      results,
+      totals,
+    });
   } catch (err) {
     console.error('Import rules error:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -438,38 +460,54 @@ router.post('/lawsdb/import-all', requireAuth, requireRole('admin'), async (req,
 
     let rulesResults = null;
     if (includeRules) {
-      const target = rulesTarget || servers[0]?.id || 'default';
-      await ensureServer({
-        id: target, name: 'Правила (общие)', color: '#8B5CF6', icon: 'RU', sortOrder: 0,
-      }).catch(() => {});
-      const ruleFiles = await lawsdb.listRules();
-      const items = [];
-      for (const file of ruleFiles) {
-        try {
-          const { articles, updatedAt } = await lawsdb.loadRulesFile(file);
-          const groups = {};
-          for (const a of articles) (groups[a.suggestedCategoryId] = groups[a.suggestedCategoryId] || []).push(a);
-          let totalForFile = 0;
-          for (const [catId, arts] of Object.entries(groups)) {
-            if (!arts.length) continue;
-            const m = arts[0];
-            await ensureCategory({
-              id: catId,
-              name: m.suggestedCategoryName,
-              short_name: m.suggestedCategoryShort,
-              color: m.suggestedCategoryColor,
-              type: 'rules',
-            });
-            const r = await importArticles(target, catId, arts, mode);
-            items.push({ file, categoryId: catId, ...r });
-            totalForFile += r.inserted;
+      // Rules are global — distribute to every server we just imported
+      const targetServers = serverResults
+        .filter((s) => !s.error)
+        .map((s) => ({ id: s.id, name: s.name }));
+
+      if (targetServers.length === 0) {
+        rulesResults = [{ error: 'Нет серверов для импорта правил' }];
+      } else {
+        const ruleFiles = await lawsdb.listRules();
+        const items = [];
+
+        for (const file of ruleFiles) {
+          try {
+            // Load rule file ONCE per file (not per server)
+            const { articles, updatedAt } = await lawsdb.loadRulesFile(file);
+            const groups = {};
+            for (const a of articles) (groups[a.suggestedCategoryId] = groups[a.suggestedCategoryId] || []).push(a);
+
+            // Ensure all rule categories exist (once)
+            for (const arts of Object.values(groups)) {
+              if (!arts.length) continue;
+              const m = arts[0];
+              await ensureCategory({
+                id: m.suggestedCategoryId,
+                name: m.suggestedCategoryName,
+                short_name: m.suggestedCategoryShort,
+                color: m.suggestedCategoryColor,
+                type: 'rules',
+              });
+            }
+
+            // Insert for every server
+            let totalForFile = 0;
+            for (const srv of targetServers) {
+              for (const [catId, arts] of Object.entries(groups)) {
+                if (!arts.length) continue;
+                const r = await importArticles(srv.id, catId, arts, mode);
+                items.push({ file, serverId: srv.id, categoryId: catId, ...r });
+                totalForFile += r.inserted;
+              }
+            }
+            await recordSyncState('lawsdb', `rules/${file}`, updatedAt, totalForFile);
+          } catch (e) {
+            items.push({ file, error: e.message });
           }
-          await recordSyncState('lawsdb', `rules/${file}`, updatedAt, totalForFile);
-        } catch (e) {
-          items.push({ file, error: e.message });
         }
+        rulesResults = items;
       }
-      rulesResults = items;
     }
 
     res.json({ success: true, servers: serverResults, rules: rulesResults });
