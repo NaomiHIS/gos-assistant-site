@@ -239,20 +239,41 @@ router.post('/logout-all', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+function discordConfigError() {
+  const missing = [];
+  if (!process.env.DISCORD_CLIENT_ID) missing.push('DISCORD_CLIENT_ID');
+  if (!process.env.DISCORD_CLIENT_SECRET) missing.push('DISCORD_CLIENT_SECRET');
+  if (!process.env.DISCORD_REDIRECT_URI) missing.push('DISCORD_REDIRECT_URI');
+  return missing.length
+    ? `Discord OAuth не настроен — не заданы переменные в Railway → Variables: ${missing.join(', ')}`
+    : null;
+}
+
+// GET /api/auth/discord/status — публичный диагностический эндпойнт
+router.get('/discord/status', (req, res) => {
+  const err = discordConfigError();
+  res.json({
+    configured: !err,
+    error: err,
+    clientIdSet: !!process.env.DISCORD_CLIENT_ID,
+    clientSecretSet: !!process.env.DISCORD_CLIENT_SECRET,
+    redirectUriSet: !!process.env.DISCORD_REDIRECT_URI,
+    redirectUri: process.env.DISCORD_REDIRECT_URI || null,
+  });
+});
+
 // GET /api/auth/discord — start OAuth flow for LOGIN (anonymous users)
 router.get('/discord', (req, res) => {
-  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
-    return res.status(503).send('Discord OAuth не настроен');
-  }
+  const err = discordConfigError();
+  if (err) return res.status(503).send(err);
   const state = buildState('login');
   res.redirect(discordAuthUrl(state));
 });
 
 // POST /api/auth/discord/link-url — returns OAuth URL for linking Discord to current user
 router.post('/discord/link-url', requireAuth, async (req, res) => {
-  if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_REDIRECT_URI) {
-    return res.status(503).json({ success: false, error: 'Discord OAuth не настроен' });
-  }
+  const err = discordConfigError();
+  if (err) return res.status(503).json({ success: false, error: err });
   const state = buildState('link', req.user.id);
   res.json({ success: true, url: discordAuthUrl(state) });
 });

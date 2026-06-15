@@ -2,7 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
-require('dotenv').config();
+// Load .env from backend/ directory (works regardless of cwd at startup)
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const db = require('./db');
 
