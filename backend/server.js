@@ -12,6 +12,9 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 // ============================================================
 // Middleware
 // ============================================================
+// Trust Railway / nginx reverse proxy — required for rate-limiter to see real IP
+app.set('trust proxy', 1);
+
 app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
