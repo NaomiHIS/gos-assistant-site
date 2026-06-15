@@ -1,10 +1,21 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const router = express.Router();
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+
+function computeSha512(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('base64')));
+    stream.on('error', reject);
+  });
+}
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
 const MAX_FILE_SIZE = parseInt(process.env.MAX_UPLOAD_SIZE || (200 * 1024 * 1024), 10); // 200MB
@@ -155,15 +166,23 @@ router.post('/upload', requireAuth, requireRole('admin'), (req, res) => {
     }
 
     try {
+      // Compute sha512 for auto-updater verification
+      let sha512 = null;
+      try {
+        sha512 = await computeSha512(req.file.path);
+      } catch (hashErr) {
+        console.warn('sha512 compute failed:', hashErr.message);
+      }
       const result = await db.query(
-        `INSERT INTO releases (type, version, filename, original_name, size, notes, uploaded_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO releases (type, version, filename, original_name, size, sha512, notes, uploaded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           type,
           version.trim().slice(0, 32),
           req.file.filename,
           req.file.originalname,
           req.file.size,
+          sha512,
           (notes || '').slice(0, 1000) || null,
           req.user.id,
         ]
@@ -223,6 +242,63 @@ router.delete('/:id', requireAuth, requireRole('admin'), async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// Auto-updater feed (electron-updater "generic" provider)
+// The app polls /feed/latest.yml, parses it, downloads the file
+// referenced by URL (relative path) from the same directory.
+// ============================================================
+
+function escapeYaml(s) {
+  return String(s || '').replace(/'/g, "''");
+}
+
+// GET /api/releases/feed/latest.yml — manifest for electron-updater
+// Auth via Authorization header (electron-updater supports requestHeaders)
+router.get('/feed/latest.yml', requireAuth, async (req, res) => {
+  try {
+    const r = await db.queryOne(
+      "SELECT * FROM releases WHERE type='installer' AND is_active=1 AND sha512 IS NOT NULL ORDER BY created_at DESC LIMIT 1"
+    );
+    if (!r) return res.status(404).type('text/plain').send('# No installer release available');
+
+    const releaseDate = new Date(r.created_at).toISOString();
+    const yml = [
+      `version: ${r.version}`,
+      `files:`,
+      `  - url: ${r.original_name}`,
+      `    sha512: ${r.sha512}`,
+      `    size: ${r.size}`,
+      `path: ${r.original_name}`,
+      `sha512: ${r.sha512}`,
+      `releaseDate: '${releaseDate}'`,
+    ].join('\n');
+
+    res.type('text/yaml').send(yml);
+  } catch (err) {
+    console.error('latest.yml error:', err);
+    res.status(500).type('text/plain').send('# ' + err.message);
+  }
+});
+
+// GET /api/releases/feed/:filename — serve actual file for electron-updater
+router.get('/feed/:filename', requireAuth, async (req, res) => {
+  try {
+    const filename = req.params.filename;
+    // Try by original name first, then by stored filename
+    const r = await db.queryOne(
+      'SELECT * FROM releases WHERE (original_name = ? OR filename = ?) AND is_active = 1 ORDER BY created_at DESC LIMIT 1',
+      [filename, filename]
+    );
+    if (!r) return res.status(404).send('Not found');
+    const filePath = path.join(UPLOADS_DIR, r.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).send('File missing on server');
+    await db.query('UPDATE releases SET download_count = download_count + 1 WHERE id = ?', [r.id]);
+    res.download(filePath, r.original_name);
+  } catch (err) {
+    res.status(500).send(err.message);
   }
 });
 

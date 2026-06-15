@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS releases (
   filename VARCHAR(255) NOT NULL,
   original_name VARCHAR(255) NOT NULL,
   size BIGINT NOT NULL,
+  sha512 VARCHAR(255) NULL,
   notes TEXT NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   uploaded_by INT NULL,
