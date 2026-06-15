@@ -3,6 +3,7 @@
 // Repo: https://hub.mos.ru/kirikch72/codex-db
 // ============================================================
 const fetch = require('node-fetch');
+const { splitInlineParts, removeEmptyParents } = require('./generic');
 
 const BASE = 'https://hub.mos.ru/kirikch72/codex-db/raw/main';
 
@@ -71,7 +72,9 @@ function flatten(rawData, categoryFilter) {
 
 async function loadServer(serverFile, categoryFilter) {
   const raw = await fetchCodex(serverFile);
-  const articles = flatten(raw, categoryFilter);
+  let articles = flatten(raw, categoryFilter);
+  // Split articles whose text contains inline "ч. N" markers into separate sub-articles
+  articles = removeEmptyParents(splitInlineParts(articles));
   return { articles, updatedAt: raw.updatedAt || null };
 }
 
