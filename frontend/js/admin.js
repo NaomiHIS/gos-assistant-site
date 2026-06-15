@@ -80,6 +80,7 @@
     if (name === 'articles') renderArticlesTable();
     if (name === 'users') loadAndRenderUsers();
     if (name === 'parser') initParserView();
+    if (name === 'releases') initReleasesView();
   }
 
   // ============================================================
@@ -912,6 +913,175 @@
     } catch (err) {
       setLawsDbProgress('Ошибка: ' + err.message);
     }
+  }
+
+  // ============================================================
+  // Releases admin
+  // ============================================================
+  const ReleasesState = { initialized: false, list: [] };
+
+  function initReleasesView() {
+    loadReleasesList();
+    if (ReleasesState.initialized) return;
+    ReleasesState.initialized = true;
+    $('btn-upload-release').addEventListener('click', uploadRelease);
+  }
+
+  async function loadReleasesList() {
+    const tbody = $('releases-table');
+    tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:20px">Загрузка...</td></tr>';
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/releases', {
+        headers: { 'Authorization': 'Bearer ' + window.GosClient.getToken() },
+      });
+      const data = await res.json();
+      if (!data.success) { tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(data.error)}</td></tr>`; return; }
+      ReleasesState.list = data.releases || [];
+      renderReleasesTable();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="8" style="color:var(--danger)">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderReleasesTable() {
+    const tbody = $('releases-table');
+    if (!ReleasesState.list.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:30px">Релизов ещё нет. Загрузите первый.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = ReleasesState.list.map((r) => `
+      <tr>
+        <td><span class="badge ${r.type === 'installer' ? 'badge-primary' : 'badge-muted'}">${r.type === 'installer' ? 'Installer' : 'Portable'}</span></td>
+        <td><code>${escapeHtml(r.version)}</code></td>
+        <td><span class="text-xs text-muted">${escapeHtml(r.originalName)}</span></td>
+        <td class="text-xs text-muted">${escapeHtml(r.sizeFormatted)}</td>
+        <td>${r.downloadCount}</td>
+        <td>
+          <label class="switch" style="width:36px;height:20px;">
+            <input type="checkbox" data-toggle-id="${r.id}" ${r.isActive ? 'checked' : ''} />
+            <span class="switch-slider"></span>
+          </label>
+        </td>
+        <td class="text-xs text-muted">${formatDate(r.createdAt)}</td>
+        <td>
+          <div class="actions-row">
+            <button class="icon-btn danger" data-del-release="${r.id}" title="Удалить">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('');
+
+    tbody.querySelectorAll('[data-toggle-id]').forEach((cb) => {
+      cb.addEventListener('change', async () => {
+        try {
+          await fetch(window.GosClient.API_BASE + '/releases/' + cb.dataset.toggleId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + window.GosClient.getToken() },
+            body: JSON.stringify({ isActive: cb.checked }),
+          });
+          toast(cb.checked ? 'Релиз активирован' : 'Релиз деактивирован');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+    tbody.querySelectorAll('[data-del-release]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить релиз и файл с сервера?')) return;
+        try {
+          await fetch(window.GosClient.API_BASE + '/releases/' + btn.dataset.delRelease, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + window.GosClient.getToken() },
+          });
+          await loadReleasesList();
+          toast('Удалено');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+  }
+
+  async function uploadRelease() {
+    const fileInput = $('rel-file');
+    const file = fileInput.files[0];
+    const type = $('rel-type').value;
+    const version = $('rel-version').value.trim();
+    const notes = $('rel-notes').value;
+    const status = $('rel-upload-status');
+    const progress = $('rel-upload-progress');
+
+    if (!file) { showRelStatus('Выберите файл', 'error'); return; }
+    if (!version) { showRelStatus('Укажите версию', 'error'); return; }
+    if (file.size > 200 * 1024 * 1024) {
+      showRelStatus('Файл больше 200 МБ', 'error');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('type', type);
+    fd.append('version', version);
+    fd.append('notes', notes);
+
+    const btn = $('btn-upload-release');
+    btn.disabled = true;
+    showRelStatus('Загрузка...', 'info');
+    progress.style.display = 'block';
+    progress.textContent = '0%';
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', window.GosClient.API_BASE + '/releases/upload');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + window.GosClient.getToken());
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round((e.loaded / e.total) * 100);
+      progress.textContent = `${pct}% (${formatBytes(e.loaded)} / ${formatBytes(e.total)})`;
+    };
+
+    xhr.onload = () => {
+      btn.disabled = false;
+      progress.style.display = 'none';
+      try {
+        const data = JSON.parse(xhr.responseText);
+        if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+          showRelStatus('✓ Загружено: ' + data.release.originalName, 'success');
+          fileInput.value = '';
+          $('rel-version').value = '';
+          $('rel-notes').value = '';
+          loadReleasesList();
+          toast('Релиз загружен');
+        } else {
+          showRelStatus('Ошибка: ' + (data.error || xhr.statusText), 'error');
+        }
+      } catch (err) {
+        showRelStatus('Ошибка ответа: ' + xhr.statusText, 'error');
+      }
+    };
+
+    xhr.onerror = () => {
+      btn.disabled = false;
+      progress.style.display = 'none';
+      showRelStatus('Ошибка сети — проверьте подключение и размер файла', 'error');
+    };
+
+    xhr.send(fd);
+  }
+
+  function showRelStatus(msg, type) {
+    const el = $('rel-upload-status');
+    el.style.display = 'block';
+    const colors = {
+      info: 'var(--accent-primary)',
+      success: 'var(--success)',
+      error: 'var(--danger)',
+    };
+    el.style.color = colors[type] || 'var(--text-muted)';
+    el.textContent = msg;
+  }
+
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1024 * 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB';
+    return (b / 1024 / 1024 / 1024).toFixed(2) + ' GB';
   }
 
   // Start

@@ -20,9 +20,11 @@
         <a href="#download" class="nav-link">Скачать</a>
         <a href="/login.html" class="nav-link">Войти</a>
       </div>
-      <div class="nav-actions">
-        <a href="/login.html" class="btn btn-secondary btn-sm">Войти</a>
-        <a href="/login.html?mode=register" class="btn btn-primary btn-sm">Регистрация</a>
+      <div class="nav-actions" id="nav-actions">
+        <a href="/login.html" class="btn btn-secondary btn-sm" data-auth="guest">Войти</a>
+        <a href="/login.html?mode=register" class="btn btn-primary btn-sm" data-auth="guest">Регистрация</a>
+        <a href="/cabinet.html" class="btn btn-primary btn-sm hidden" data-auth="user">Личный кабинет</a>
+        <a href="/admin.html" class="btn btn-secondary btn-sm hidden" data-auth="admin">Админ-панель</a>
       </div>
     </div>
   </nav>
@@ -44,11 +46,12 @@
         база у вас перед глазами.
       </p>
       <div class="hero-actions">
-        <a href="#download" class="btn btn-primary btn-lg">
+        <a href="#download" class="btn btn-primary btn-lg" id="hero-download">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Скачать для Windows
         </a>
-        <a href="/login.html?mode=register" class="btn btn-secondary btn-lg">Создать аккаунт</a>
+        <a href="/login.html?mode=register" class="btn btn-secondary btn-lg" data-auth="guest" id="hero-register">Создать аккаунт</a>
+        <a href="/cabinet.html" class="btn btn-secondary btn-lg hidden" data-auth="user">Личный кабинет</a>
       </div>
     </div>
   </section>
@@ -114,17 +117,21 @@
     <div class="container">
       <div class="section-header">
         <h2 class="section-title">Скачать GOS Assistant</h2>
-        <p class="section-subtitle">Создайте аккаунт и начните пользоваться приложением прямо сейчас</p>
+        <p class="section-subtitle" id="download-subtitle">Создайте аккаунт и начните пользоваться приложением прямо сейчас</p>
       </div>
-      <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
-        <a href="/login.html?mode=register" class="btn btn-primary btn-lg">
+      <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;" id="download-buttons">
+        <a href="/login.html?mode=register" class="btn btn-primary btn-lg" data-auth="guest">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Создать аккаунт
+        </a>
+        <a href="/cabinet.html#download" class="btn btn-primary btn-lg hidden" data-auth="user" id="dl-installer">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Скачать установщик
         </a>
-        <a href="/login.html?mode=register" class="btn btn-secondary btn-lg">Скачать Portable</a>
+        <a href="/cabinet.html#download" class="btn btn-secondary btn-lg hidden" data-auth="user" id="dl-portable">Скачать Portable</a>
       </div>
-      <p class="text-sm text-muted" style="text-align:center;margin-top:16px">
-        Windows 10 / 11 · 64-bit · ~80 МБ
+      <p class="text-sm text-muted" style="text-align:center;margin-top:16px" id="download-info">
+        Windows 10 / 11 · 64-bit
       </p>
     </div>
   </section>

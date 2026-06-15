@@ -204,15 +204,90 @@
   }
 
   // ============================================================
-  // Downloads (placeholders)
+  // Downloads — real releases from API
   // ============================================================
-  function setupDownloads() {
-    const showSoon = (e) => {
-      e.preventDefault();
-      toast('Ссылки появятся после публикации первого релиза');
-    };
-    $('btn-download-installer').addEventListener('click', showSoon);
-    $('btn-download-portable').addEventListener('click', showSoon);
+  async function setupDownloads() {
+    const grid = $('download-grid');
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/releases/latest');
+      const data = await res.json();
+      if (!data.success || (!data.installer && !data.portable)) {
+        grid.innerHTML = `
+          <div class="text-muted text-sm" style="padding: 30px; text-align: center;">
+            Релизы пока не загружены. Загляните позже.
+          </div>`;
+        return;
+      }
+      const items = [];
+      if (data.installer) {
+        items.push(renderDownloadItem(data.installer, 'Windows Installer', 'x64 · с автообновлением',
+          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+          'btn-primary'));
+      }
+      if (data.portable) {
+        items.push(renderDownloadItem(data.portable, 'Portable версия', 'x64 · без установки',
+          `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>`,
+          'btn-secondary'));
+      }
+      grid.innerHTML = items.join('');
+      grid.querySelectorAll('[data-release-id]').forEach((btn) => {
+        btn.addEventListener('click', (e) => downloadRelease(e, btn.dataset.releaseId, btn.dataset.releaseName));
+      });
+    } catch (err) {
+      grid.innerHTML = `<div class="text-muted text-sm" style="padding: 20px; color: var(--danger);">Ошибка: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderDownloadItem(release, label, descSuffix, iconSvg, btnClass) {
+    return `
+      <div class="download-item">
+        <div class="download-icon">${iconSvg}</div>
+        <div class="download-info">
+          <div class="download-title">${escapeHtml(label)} <span class="text-xs text-muted">v${escapeHtml(release.version)}</span></div>
+          <div class="download-desc">${escapeHtml(release.sizeFormatted)} · ${descSuffix}${release.downloadCount ? ' · ' + release.downloadCount + ' скачиваний' : ''}</div>
+          ${release.notes ? `<div class="text-xs text-muted mt-2">${escapeHtml(release.notes)}</div>` : ''}
+        </div>
+        <button class="btn ${btnClass}" data-release-id="${release.id}" data-release-name="${escapeHtml(release.originalName)}">Скачать</button>
+      </div>
+    `;
+  }
+
+  async function downloadRelease(e, id, originalName) {
+    e.preventDefault();
+    const token = window.GosClient.getToken();
+    if (!token) {
+      toast('Войдите в аккаунт');
+      return;
+    }
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/releases/download/' + id, {
+        headers: { 'Authorization': 'Bearer ' + token },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        toast('Ошибка: ' + (err.error || res.statusText));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = originalName || ('GOS-Assistant-' + id);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast('Загрузка началась');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    }
+  }
+
+  function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // ============================================================

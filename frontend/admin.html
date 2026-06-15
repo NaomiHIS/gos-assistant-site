@@ -41,6 +41,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="14" y1="4" x2="10" y2="20"/></svg>
           <span>Парсер</span>
         </div>
+        <div class="admin-nav-item" data-view="releases">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span>Релизы</span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -179,6 +183,62 @@
               <tr><th>Email</th><th>Имя</th><th>Роль</th><th>Регистрация</th><th>Последний вход</th><th></th></tr>
             </thead>
             <tbody id="users-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- RELEASES -->
+      <div class="view hidden" data-view="releases">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Релизы приложения</div>
+            <div class="admin-subtitle">Загрузка установщиков и portable-версий для пользователей</div>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="section-title">Загрузить новый релиз</div>
+          <div class="flex gap-3 mb-3">
+            <div class="input-group" style="max-width: 200px;">
+              <label class="input-label">Тип</label>
+              <select class="input select" id="rel-type">
+                <option value="installer">Installer (.exe)</option>
+                <option value="portable">Portable (.exe / .zip)</option>
+              </select>
+            </div>
+            <div class="input-group" style="max-width: 160px;">
+              <label class="input-label">Версия</label>
+              <input type="text" class="input" id="rel-version" placeholder="1.0.0" />
+            </div>
+            <div class="input-group flex-1">
+              <label class="input-label">Файл (макс. 200 МБ, .exe/.msi/.zip/.7z)</label>
+              <input type="file" class="input" id="rel-file" accept=".exe,.msi,.zip,.7z" style="padding: 8px;" />
+            </div>
+          </div>
+          <div class="input-group mb-3">
+            <label class="input-label">Заметки к релизу (необязательно)</label>
+            <textarea class="input textarea" id="rel-notes" rows="2" placeholder="Что нового в этой версии"></textarea>
+          </div>
+          <button class="btn btn-primary" id="btn-upload-release">Загрузить</button>
+          <div class="text-xs mt-3" id="rel-upload-status" style="display:none"></div>
+          <div class="text-xs text-muted mt-2" id="rel-upload-progress" style="display:none"></div>
+        </div>
+
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Тип</th>
+                <th>Версия</th>
+                <th>Файл</th>
+                <th>Размер</th>
+                <th>Скачиваний</th>
+                <th>Активен</th>
+                <th>Дата</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="releases-table"></tbody>
           </table>
         </div>
       </div>

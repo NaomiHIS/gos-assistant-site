@@ -99,6 +99,25 @@ CREATE TABLE IF NOT EXISTS sessions (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- Releases: uploaded installer/portable files for download
+-- ============================================================
+CREATE TABLE IF NOT EXISTS releases (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  type ENUM('installer', 'portable') NOT NULL,
+  version VARCHAR(32) NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  size BIGINT NOT NULL,
+  notes TEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  uploaded_by INT NULL,
+  download_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_type_active (type, is_active, created_at)
+) ENGINE=InnoDB;
+
+-- ============================================================
 -- Sync state: per-source/file last imported timestamp
 -- Used to detect when alamantik/majestic-laws-db has fresh data
 -- ============================================================

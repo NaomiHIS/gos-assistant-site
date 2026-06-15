@@ -126,28 +126,8 @@
           <div class="cabinet-card-desc">Десктопное приложение с оверлеем поверх игры</div>
         </div>
         <div class="cabinet-card-body">
-          <div class="download-grid">
-            <div class="download-item">
-              <div class="download-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              </div>
-              <div class="download-info">
-                <div class="download-title">Windows Installer</div>
-                <div class="download-desc">x64 · ~80 МБ · с автообновлением</div>
-              </div>
-              <a href="#" class="btn btn-primary" id="btn-download-installer">Скачать</a>
-            </div>
-
-            <div class="download-item">
-              <div class="download-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/></svg>
-              </div>
-              <div class="download-info">
-                <div class="download-title">Portable версия</div>
-                <div class="download-desc">x64 · ~80 МБ · без установки</div>
-              </div>
-              <a href="#" class="btn btn-secondary" id="btn-download-portable">Скачать</a>
-            </div>
+          <div class="download-grid" id="download-grid">
+            <div class="text-muted text-sm" style="padding: 20px; text-align: center;">Загрузка...</div>
           </div>
 
           <div class="info-block mt-4">
@@ -155,7 +135,6 @@
             <ol class="info-block-list">
               <li>Скачайте установщик и запустите его</li>
               <li>Войдите в приложение тем же email и паролем</li>
-              <li>В настройках укажите URL сервера — это сделает администратор</li>
               <li>Нажмите <code>Ctrl+Shift+K</code> для открытия оверлея в игре</li>
             </ol>
           </div>
