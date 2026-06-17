@@ -9,7 +9,7 @@
 const fetch = require('node-fetch');
 const { splitInlineParts, removeEmptyParents } = require('./generic');
 
-const BASE = 'https://raw.githubusercontent.com/alamantik/majestic-laws-db/main';
+const BASE = 'https://raw.githubusercontent.com/NaomiHIS/majestic-laws-db/main';
 
 // Maps source codex sections to our category IDs
 const LAW_CATEGORY_MAP = {
