@@ -83,6 +83,7 @@
     if (name === 'releases') initReleasesView();
     if (name === 'donate') initDonateView();
     if (name === 'devlog') initDevlogView();
+    if (name === 'maintenance') initMaintenanceView();
   }
 
   // ============================================================
@@ -525,6 +526,81 @@
     $('btn-parser-select-all').addEventListener('click', () => toggleAllParser(true));
     $('btn-parser-deselect-all').addEventListener('click', () => toggleAllParser(false));
     $('parser-check-all').addEventListener('change', (e) => toggleAllParser(e.target.checked));
+
+    // JSON-per-server import
+    $('btn-json-preview').addEventListener('click', () => doJsonServerImport({ preview: true }));
+    $('btn-json-import').addEventListener('click', () => doJsonServerImport({ preview: false }));
+    $('btn-json-clear').addEventListener('click', () => {
+      $('json-import-raw').value = '';
+      $('json-import-file').value = '';
+      $('json-import-status').textContent = '';
+    });
+    $('json-import-file').addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        $('json-import-raw').value = text;
+        $('json-import-status').textContent = `Файл загружен: ${file.name} (${(file.size / 1024).toFixed(1)} КБ)`;
+      } catch (err) {
+        $('json-import-status').textContent = 'Ошибка чтения файла: ' + err.message;
+      }
+    });
+  }
+
+  async function doJsonServerImport({ preview }) {
+    const status = $('json-import-status');
+    const serverId = $('json-import-server').value;
+    if (!serverId) {
+      status.textContent = 'Выберите сервер';
+      return;
+    }
+    const raw = $('json-import-raw').value.trim();
+    if (!raw) {
+      status.textContent = 'Вставьте JSON или загрузите файл';
+      return;
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      status.textContent = 'Невалидный JSON: ' + err.message;
+      return;
+    }
+    const mode = $('json-import-mode').value;
+    const btn = preview ? $('btn-json-preview') : $('btn-json-import');
+    btn.disabled = true;
+    status.textContent = preview ? 'Парсинг...' : 'Импорт...';
+
+    try {
+      const endpoint = preview ? '/parser/json/preview-server' : '/parser/json/import-server';
+      const res = await fetch(window.GosClient.API_BASE + endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + window.GosClient.getToken(),
+        },
+        body: JSON.stringify({ serverId, json: parsed, mode }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        status.textContent = '✗ ' + (data.error || 'Неизвестная ошибка');
+        return;
+      }
+      if (preview) {
+        const groupLines = Object.entries(data.groups || {})
+          .map(([cat, count]) => `  ${cat}: ${count}`)
+          .join('\n');
+        status.textContent = `✓ Найдено статей: ${data.articlesCount}\nПо категориям:\n${groupLines || '  (нет)'}`;
+      } else {
+        status.textContent = `✓ Импорт завершён\nДобавлено: ${data.inserted}\nУдалено старых: ${data.removed}\nПропущено: ${data.skipped}`;
+        toast('Импорт завершён: +' + data.inserted);
+      }
+    } catch (err) {
+      status.textContent = '✗ ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function loadCodexDbServers() {
@@ -592,10 +668,15 @@
     const srvSel = $('parser-server');
     const catSel = $('parser-category');
     if (!srvSel || !catSel) return;
-    srvSel.innerHTML = State.servers.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('');
+    const serverOptions = State.servers.map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.name)}</option>`).join('');
+    srvSel.innerHTML = serverOptions;
     catSel.innerHTML =
       '<option value="__auto__">По типу из источника (для Codex-DB)</option>' +
       State.categories.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    const jsonSrvSel = $('json-import-server');
+    if (jsonSrvSel) {
+      jsonSrvSel.innerHTML = '<option value="">— Выберите сервер —</option>' + serverOptions;
+    }
   }
 
   function setParserStatus(msg, type) {
@@ -1365,6 +1446,112 @@
       btn.disabled = false;
     }
   }
+
+  // ============================================================
+  // Maintenance view
+  // ============================================================
+  const MaintenanceState = { initialized: false, current: null };
+
+  function initMaintenanceView() {
+    loadMaintenance();
+    if (MaintenanceState.initialized) return;
+    MaintenanceState.initialized = true;
+
+    $('btn-maint-save').addEventListener('click', () => saveMaintenance(true));
+    $('btn-maint-disable').addEventListener('click', () => saveMaintenance(false));
+    $('maint-quick-duration').addEventListener('change', (e) => {
+      const minutes = parseInt(e.target.value, 10);
+      if (!minutes) return;
+      const d = new Date(Date.now() + minutes * 60 * 1000);
+      $('maint-ends-at').value = toLocalInput(d);
+      e.target.value = '';
+    });
+  }
+
+  function toLocalInput(d) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  async function loadMaintenance() {
+    const status = $('maint-status');
+    status.textContent = 'Загрузка...';
+    try {
+      const data = await window.GosClient.maintenance.get();
+      MaintenanceState.current = data;
+      $('maint-enabled').checked = !!data.enabled;
+      $('maint-message').value = data.message || '';
+      $('maint-ends-at').value = data.endsAt ? toLocalInput(new Date(data.endsAt)) : '';
+      updateMaintenancePill(data);
+      status.textContent = data.updatedAt
+        ? 'Последнее изменение: ' + new Date(data.updatedAt).toLocaleString('ru-RU')
+        : '';
+    } catch (err) {
+      status.textContent = 'Не удалось загрузить: ' + err.message;
+    }
+  }
+
+  function updateMaintenancePill(data) {
+    const pill = $('maintenance-state-pill');
+    const dot = $('nav-maintenance-dot');
+    if (!pill) return;
+    if (data.active) {
+      pill.textContent = '● Активен';
+      pill.style.background = 'rgba(245,158,11,0.15)';
+      pill.style.color = 'var(--warning, #F59E0B)';
+      if (dot) dot.style.display = '';
+    } else if (data.enabled && data.expired) {
+      pill.textContent = 'Срок истёк';
+      pill.style.background = 'var(--bg-tertiary)';
+      pill.style.color = 'var(--text-muted)';
+      if (dot) dot.style.display = 'none';
+    } else {
+      pill.textContent = 'Выключен';
+      pill.style.background = 'rgba(16,185,129,0.12)';
+      pill.style.color = 'var(--success, #10B981)';
+      if (dot) dot.style.display = 'none';
+    }
+  }
+
+  async function saveMaintenance(turnOn) {
+    const status = $('maint-status');
+    const enabled = turnOn ? $('maint-enabled').checked : false;
+    const message = $('maint-message').value.trim();
+    const endsLocal = $('maint-ends-at').value;
+    let endsAt = null;
+    if (endsLocal) {
+      const d = new Date(endsLocal);
+      if (isNaN(d.getTime())) {
+        status.textContent = 'Некорректная дата окончания';
+        return;
+      }
+      endsAt = d.toISOString();
+    }
+    const btn = turnOn ? $('btn-maint-save') : $('btn-maint-disable');
+    btn.disabled = true;
+    status.textContent = 'Сохранение...';
+    try {
+      const data = await window.GosClient.maintenance.update({ enabled, message, endsAt });
+      MaintenanceState.current = data;
+      $('maint-enabled').checked = !!data.enabled;
+      updateMaintenancePill(data);
+      status.textContent = '✓ Сохранено';
+      toast(data.active ? 'Тех. работы включены' : 'Тех. работы выключены');
+    } catch (err) {
+      status.textContent = '✗ ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Periodic refresh of the nav dot — keeps admins aware
+  async function pollMaintenanceStatus() {
+    try {
+      const data = await window.GosClient.maintenance.get();
+      updateMaintenancePill(data);
+    } catch {}
+  }
+  setInterval(pollMaintenanceStatus, 60000);
 
   // Start
   if (document.readyState === 'loading') {

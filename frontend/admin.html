@@ -53,6 +53,11 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
           <span>DevLog</span>
         </div>
+        <div class="admin-nav-item" data-view="maintenance">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          <span>Тех. работы</span>
+          <span id="nav-maintenance-dot" style="display:none;width:8px;height:8px;border-radius:50%;background:var(--warning,#F59E0B);margin-left:auto"></span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -306,6 +311,58 @@
         </div>
       </div>
 
+      <!-- MAINTENANCE -->
+      <div class="view hidden" data-view="maintenance">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Технические работы</div>
+            <div class="admin-subtitle">Когда режим включён — обычным пользователям в приложении показывается блокирующее окно</div>
+          </div>
+          <div id="maintenance-state-pill" class="text-xs" style="padding:6px 12px;border-radius:999px;background:var(--bg-tertiary);color:var(--text-muted)">Загрузка...</div>
+        </div>
+
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <label class="flex items-center gap-3" style="cursor:pointer; padding: 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); margin-bottom: 16px;">
+            <input type="checkbox" id="maint-enabled" style="width: 18px; height: 18px; cursor: pointer;" />
+            <div>
+              <div style="font-weight:600;color:var(--text-primary)">Включить режим тех. работ</div>
+              <div class="text-xs text-muted">Действует на всех пользователей кроме админов и модераторов</div>
+            </div>
+          </label>
+
+          <div class="input-group">
+            <label class="input-label">Сообщение пользователям</label>
+            <textarea class="input textarea" id="maint-message" rows="3" placeholder="Например: Проводим обновление баз данных. Спасибо за терпение."></textarea>
+          </div>
+
+          <div class="flex gap-3" style="flex-wrap:wrap">
+            <div class="input-group" style="flex:1;min-width:240px">
+              <label class="input-label">Срок окончания (локальное время)</label>
+              <input type="datetime-local" class="input" id="maint-ends-at" />
+              <div class="text-xs text-muted mt-2">Оставьте пустым, если срок неизвестен. После наступления режим автоматически выключится.</div>
+            </div>
+            <div class="input-group" style="max-width:220px">
+              <label class="input-label">Быстрая длительность</label>
+              <select class="input select" id="maint-quick-duration">
+                <option value="">— Выбрать —</option>
+                <option value="15">15 минут</option>
+                <option value="30">30 минут</option>
+                <option value="60">1 час</option>
+                <option value="120">2 часа</option>
+                <option value="240">4 часа</option>
+                <option value="1440">1 сутки</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex gap-2 mt-3">
+            <button class="btn btn-primary" id="btn-maint-save">Сохранить</button>
+            <button class="btn btn-secondary" id="btn-maint-disable">Выключить сейчас</button>
+          </div>
+          <div id="maint-status" class="text-xs text-muted mt-3"></div>
+        </div>
+      </div>
+
       <!-- PARSER -->
       <div class="view hidden" data-view="parser">
         <div class="admin-header">
@@ -341,6 +398,43 @@
             <button class="btn btn-secondary" id="btn-lawsdb-import-one">Один сервер</button>
           </div>
           <div id="lawsdb-progress" class="text-xs text-muted mt-3" style="font-family: monospace; white-space: pre-line;"></div>
+        </div>
+
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="section-title">📥 JSON для одного сервера</div>
+          <div class="text-xs text-muted mb-4">
+            Обнови законы конкретного сервера из JSON-файла. Принимается формат <code>alamantik/majestic-laws-db</code> (<code>{ updatedAt, data: { UK, AK, DK, PK, UAK } }</code>) или плоский массив статей.
+          </div>
+
+          <div class="flex gap-3 mb-3" style="flex-wrap:wrap">
+            <div class="input-group" style="flex:1; min-width:220px">
+              <label class="input-label">Сервер</label>
+              <select class="input select" id="json-import-server"></select>
+            </div>
+            <div class="input-group" style="max-width:220px">
+              <label class="input-label">Режим</label>
+              <select class="input select" id="json-import-mode">
+                <option value="replace">Заменить законы сервера</option>
+                <option value="add">Добавить к существующим</option>
+              </select>
+            </div>
+            <div class="input-group" style="max-width:260px">
+              <label class="input-label">Файл .json</label>
+              <input type="file" class="input" id="json-import-file" accept="application/json,.json" style="padding:8px" />
+            </div>
+          </div>
+
+          <div class="input-group">
+            <label class="input-label">Или вставьте JSON</label>
+            <textarea class="input textarea" id="json-import-raw" rows="6" placeholder='{"updatedAt": 1700000000000, "data": {"UK": [...], "AK": [...]}}  — или массив статей' style="font-family:monospace;font-size:12px"></textarea>
+          </div>
+
+          <div class="flex gap-2 mt-2">
+            <button class="btn btn-secondary" id="btn-json-preview">Предпросмотр</button>
+            <button class="btn btn-primary" id="btn-json-import">Импортировать</button>
+            <button class="btn btn-secondary btn-sm" id="btn-json-clear">Очистить</button>
+          </div>
+          <div id="json-import-status" class="text-xs text-muted mt-3" style="font-family:monospace;white-space:pre-line"></div>
         </div>
 
         <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px; display:none" id="codexdb-block">

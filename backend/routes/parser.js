@@ -3,6 +3,60 @@ const router = express.Router();
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { parseUrl, parseRawText, codexdb, lawsdb } = require('../parsers');
+const { splitInlineParts, removeEmptyParents } = require('../parsers/generic');
+
+const LAW_CATEGORY_MAP = { UK: 'uk', AK: 'ak', DK: 'dk', PK: 'pk', UAK: 'uk' };
+const LAW_CAT_META = {
+  uk: { name: 'Уголовный кодекс',       short: 'УК', color: '#DF005B' },
+  ak: { name: 'Административный кодекс', short: 'АК', color: '#F59E0B' },
+  dk: { name: 'Дорожный кодекс',        short: 'ДК', color: '#0070F3' },
+  pk: { name: 'Процессуальный кодекс',  short: 'ПК', color: '#10B981' },
+};
+
+// Convert any of supported JSON shapes into a flat list of articles.
+// Supported shapes:
+//   1. { data: { UK: { articles: [...] }, AK: {...}, ... } }   (alamantik format)
+//   2. { UK: [...], AK: [...], ... }                           (sections without wrapper)
+//   3. [{ code, title, text, ... }]                            (raw array — categoryId required per item or default)
+function normalizeJsonLaws(json) {
+  if (Array.isArray(json)) {
+    return json.map((a) => ({
+      suggestedCategoryId: a.categoryId || a.category_id || a.suggestedCategoryId || 'uk',
+      code: String(a.code || ''),
+      title: a.title || '',
+      text: a.text || a.title || '',
+      penalty: a.penalty || null,
+      wantedStars: a.wantedStars || a.wanted_stars || 0,
+    }));
+  }
+  const out = [];
+  const data = json.data || json;
+  for (const sectionKey of Object.keys(data)) {
+    const section = data[sectionKey];
+    const articles = Array.isArray(section) ? section : (section && section.articles) || [];
+    const catId = LAW_CATEGORY_MAP[sectionKey.toUpperCase()] || sectionKey.toLowerCase();
+    for (const a of articles) {
+      out.push({
+        suggestedCategoryId: catId,
+        code: String(a.code || ''),
+        title: a.title || '',
+        text: a.text || a.title || '',
+        penalty: a.penalty || null,
+        wantedStars: a.wantedStars || a.wanted_stars || 0,
+      });
+    }
+  }
+  return out;
+}
+
+function groupByCategory(articles) {
+  const groups = {};
+  for (const a of articles) {
+    const id = a.suggestedCategoryId || 'uk';
+    (groups[id] = groups[id] || []).push(a);
+  }
+  return groups;
+}
 
 // ============================================================
 // Helpers for ensuring server/category exist before insert
@@ -513,6 +567,96 @@ router.post('/lawsdb/import-all', requireAuth, requireRole('admin'), async (req,
     res.json({ success: true, servers: serverResults, rules: rulesResults });
   } catch (err) {
     console.error('Import all error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// JSON import for a single server
+// POST /api/parser/json/preview-server { serverId, json }
+// POST /api/parser/json/import-server  { serverId, json, mode }
+// ============================================================
+router.post('/json/preview-server', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { serverId, json } = req.body || {};
+    if (!serverId) return res.status(400).json({ error: 'serverId обязателен' });
+    if (json === undefined || json === null) return res.status(400).json({ error: 'json обязателен' });
+
+    const srv = await db.queryOne('SELECT id, name FROM servers WHERE id = ?', [serverId]);
+    if (!srv) return res.status(400).json({ error: 'Сервер не найден' });
+
+    let articles = normalizeJsonLaws(json);
+    articles = removeEmptyParents(splitInlineParts(articles));
+
+    const groups = groupByCategory(articles);
+    const counts = Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, v.length]));
+
+    res.json({
+      success: true,
+      server: { id: srv.id, name: srv.name },
+      articlesCount: articles.length,
+      groups: counts,
+      updatedAt: json && typeof json === 'object' && !Array.isArray(json) ? (json.updatedAt || null) : null,
+    });
+  } catch (err) {
+    console.error('JSON preview error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/json/import-server', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const { serverId, json, mode } = req.body || {};
+    if (!serverId) return res.status(400).json({ error: 'serverId обязателен' });
+    if (json === undefined || json === null) return res.status(400).json({ error: 'json обязателен' });
+    if (mode && mode !== 'add' && mode !== 'replace') {
+      return res.status(400).json({ error: 'mode должен быть add или replace' });
+    }
+
+    const srv = await db.queryOne('SELECT id, name FROM servers WHERE id = ?', [serverId]);
+    if (!srv) return res.status(400).json({ error: 'Сервер не найден' });
+
+    let articles = normalizeJsonLaws(json);
+    articles = removeEmptyParents(splitInlineParts(articles));
+
+    if (articles.length === 0) {
+      return res.status(400).json({ error: 'JSON не содержит статей' });
+    }
+
+    const groups = groupByCategory(articles);
+    let totalInserted = 0, totalRemoved = 0, totalSkipped = 0;
+    const perCategory = [];
+
+    for (const [catId, arts] of Object.entries(groups)) {
+      const meta = LAW_CAT_META[catId] || { name: catId.toUpperCase(), short: catId.toUpperCase(), color: '#8B5CF6' };
+      await ensureCategory({
+        id: catId,
+        name: meta.name,
+        short_name: meta.short,
+        color: meta.color,
+        type: 'laws',
+      });
+      const r = await importArticles(srv.id, catId, arts, mode || 'replace');
+      totalInserted += r.inserted;
+      totalRemoved += r.removed;
+      totalSkipped += r.skipped;
+      perCategory.push({ categoryId: catId, ...r });
+    }
+
+    const updatedAt = json && typeof json === 'object' && !Array.isArray(json) ? (json.updatedAt || null) : null;
+    await recordSyncState('json-manual', `server/${srv.id}`, updatedAt, totalInserted);
+
+    res.json({
+      success: true,
+      server: { id: srv.id, name: srv.name },
+      inserted: totalInserted,
+      removed: totalRemoved,
+      skipped: totalSkipped,
+      perCategory,
+      sourceUpdatedAt: updatedAt,
+    });
+  } catch (err) {
+    console.error('JSON import error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

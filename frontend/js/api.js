@@ -140,6 +140,16 @@
       update: (id, data) => request('PUT', '/devlog/' + id, data),
       remove: (id) => request('DELETE', '/devlog/' + id),
     },
+
+    maintenance: {
+      get: () => request('GET', '/maintenance'),
+      update: (data) => request('PUT', '/maintenance', data),
+    },
+
+    parser: {
+      importServerJson: (data) => request('POST', '/parser/json/import-server', data),
+      previewServerJson: (data) => request('POST', '/parser/json/preview-server', data),
+    },
   };
 
   // Toast helper

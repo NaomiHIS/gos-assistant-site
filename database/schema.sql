@@ -156,6 +156,23 @@ CREATE TABLE IF NOT EXISTS donate_links (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- Maintenance: single-row flag for app-wide tech work mode
+-- ============================================================
+CREATE TABLE IF NOT EXISTS maintenance (
+  id TINYINT PRIMARY KEY DEFAULT 1,
+  enabled TINYINT(1) NOT NULL DEFAULT 0,
+  message TEXT NULL,
+  starts_at TIMESTAMP NULL,
+  ends_at TIMESTAMP NULL,
+  updated_by INT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT chk_maintenance_single CHECK (id = 1),
+  FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+INSERT IGNORE INTO maintenance (id, enabled) VALUES (1, 0);
+
+-- ============================================================
 -- Sync state: per-source/file last imported timestamp
 -- Used to detect when alamantik/majestic-laws-db has fresh data
 -- ============================================================

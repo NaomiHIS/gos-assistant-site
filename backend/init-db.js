@@ -17,7 +17,8 @@ async function initDatabase(force = false) {
   }
 
   if (hasTables && !force) {
-    console.log('[InitDB] Schema already exists, skipping.');
+    console.log('[InitDB] Schema already exists, running migrations...');
+    await runMigrations();
     return;
   }
 
@@ -45,7 +46,33 @@ async function initDatabase(force = false) {
     console.log('[InitDB] ✓ Seed applied');
   }
 
+  await runMigrations();
+
   console.log('[InitDB] ✓ Database initialized successfully');
+}
+
+// ============================================================
+// Idempotent migrations — run on every startup, safe to re-run.
+// Use these to add new tables/columns introduced after first install.
+// ============================================================
+async function runMigrations() {
+  try {
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS maintenance (
+        id TINYINT PRIMARY KEY DEFAULT 1,
+        enabled TINYINT(1) NOT NULL DEFAULT 0,
+        message TEXT NULL,
+        starts_at TIMESTAMP NULL,
+        ends_at TIMESTAMP NULL,
+        updated_by INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    await db.query('INSERT IGNORE INTO maintenance (id, enabled) VALUES (1, 0)');
+    console.log('[InitDB] ✓ maintenance table ensured');
+  } catch (err) {
+    console.warn('[InitDB] migration warning:', err.message);
+  }
 }
 
 module.exports = { initDatabase };
