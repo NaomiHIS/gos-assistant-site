@@ -74,12 +74,21 @@ router.put('/', requireAuth, requireRole('admin'), async (req, res) => {
     }
 
     const msg = (typeof message === 'string' ? message : '').slice(0, 1000) || null;
+    const enabledInt = enabled ? 1 : 0;
+    const updatedBy = req.user?.id || null;
 
+    // Use upsert so a missing row (e.g. if the seed INSERT IGNORE never ran)
+    // is created instead of silently affecting 0 rows.
     await db.query(
-      `UPDATE maintenance
-          SET enabled = ?, message = ?, starts_at = ?, ends_at = ?, updated_by = ?
-        WHERE id = 1`,
-      [enabled ? 1 : 0, msg, startsAtSql, endsAtSql, req.user?.id || null]
+      `INSERT INTO maintenance (id, enabled, message, starts_at, ends_at, updated_by)
+       VALUES (1, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         enabled = VALUES(enabled),
+         message = VALUES(message),
+         starts_at = VALUES(starts_at),
+         ends_at = VALUES(ends_at),
+         updated_by = VALUES(updated_by)`,
+      [enabledInt, msg, startsAtSql, endsAtSql, updatedBy]
     );
 
     const state = await loadState();
