@@ -557,6 +557,50 @@ img { max-width: 100%; display: block; }
   color: var(--accent-primary);
 }
 
+.admin-nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  background: var(--accent-primary);
+  color: white;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* Support ticket messages — shared between admin and cabinet */
+.ticket-messages { display: flex; flex-direction: column; gap: 12px; }
+.ticket-message { display: flex; gap: 10px; max-width: 88%; }
+.ticket-message.admin { align-self: flex-start; }
+.ticket-message.user { align-self: flex-end; flex-direction: row-reverse; }
+.ticket-message-avatar {
+  width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 12px; flex-shrink: 0;
+}
+.ticket-message.admin .ticket-message-avatar { background: var(--accent-soft); color: var(--accent-primary); }
+.ticket-message.user .ticket-message-avatar { background: var(--bg-tertiary); color: var(--text-secondary); }
+.ticket-message-body {
+  padding: 10px 14px; border-radius: var(--radius-md);
+  font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+}
+.ticket-message.admin .ticket-message-body { background: var(--accent-soft); color: var(--text-primary); }
+.ticket-message.user .ticket-message-body { background: var(--bg-tertiary); color: var(--text-primary); }
+.ticket-message-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.ticket-message.user .ticket-message-meta { text-align: right; }
+
+.ticket-row-status {
+  padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  display: inline-block;
+}
+.ticket-status-open        { background: rgba(59,130,246,0.15); color: #3B82F6; }
+.ticket-status-in_progress { background: rgba(245,158,11,0.15); color: #F59E0B; }
+.ticket-status-answered    { background: rgba(16,185,129,0.15); color: #10B981; }
+.ticket-status-closed      { background: var(--bg-tertiary); color: var(--text-muted); }
+
 .admin-sidebar-footer {
   margin-top: auto;
   padding-top: 14px;

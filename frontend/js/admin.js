@@ -84,6 +84,7 @@
     if (name === 'donate') initDonateView();
     if (name === 'devlog') initDevlogView();
     if (name === 'maintenance') initMaintenanceView();
+    if (name === 'support') initSupportView();
   }
 
   // ============================================================
@@ -1543,6 +1544,208 @@
       btn.disabled = false;
     }
   }
+
+  // ============================================================
+  // Support view (admin)
+  // ============================================================
+  const SupportState = { initialized: false, tickets: [], current: null, view: 'list' };
+
+  function initSupportView() {
+    loadSupportTickets();
+    if (SupportState.initialized) return;
+    SupportState.initialized = true;
+
+    $('btn-refresh-support').addEventListener('click', loadSupportTickets);
+    $('sup-filter-status').addEventListener('change', loadSupportTickets);
+    $('sup-filter-type').addEventListener('change', loadSupportTickets);
+    $('sup-filter-unread').addEventListener('change', loadSupportTickets);
+    let searchDebounce = null;
+    $('sup-filter-search').addEventListener('input', () => {
+      clearTimeout(searchDebounce);
+      searchDebounce = setTimeout(loadSupportTickets, 300);
+    });
+
+    $('btn-sup-back').addEventListener('click', () => {
+      showSupportSubview('list');
+      loadSupportTickets();
+    });
+    $('btn-sup-reply').addEventListener('click', sendSupportReply);
+    $('sup-detail-status').addEventListener('change', changeSupportStatus);
+    $('sup-reply-body').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendSupportReply(); }
+    });
+  }
+
+  function showSupportSubview(name) {
+    SupportState.view = name;
+    $('sup-list-view').classList.toggle('hidden', name !== 'list');
+    $('sup-detail-view').classList.toggle('hidden', name !== 'detail');
+  }
+
+  async function loadSupportTickets() {
+    const tbody = $('sup-tickets-table');
+    tbody.innerHTML = '<tr><td colspan="7" class="text-sm text-muted" style="padding:24px;text-align:center">Загрузка...</td></tr>';
+    const params = {};
+    const status = $('sup-filter-status').value;
+    const type = $('sup-filter-type').value;
+    const search = $('sup-filter-search').value.trim();
+    const unread = $('sup-filter-unread').checked;
+    if (status) params.status = status;
+    if (type) params.type = type;
+    if (search) params.search = search;
+    if (unread) params.unread = '1';
+    try {
+      const data = await window.GosClient.support.listAll(params);
+      SupportState.tickets = data.tickets || [];
+      renderSupportList();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-sm text-muted" style="padding:24px;text-align:center">Ошибка: ${escapeHtml(err.message)}</td></tr>`;
+    }
+    refreshAdminSupportBadge();
+  }
+
+  function renderSupportList() {
+    const tbody = $('sup-tickets-table');
+    if (SupportState.tickets.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-sm text-muted" style="padding:24px;text-align:center">Тикетов не найдено</td></tr>';
+      return;
+    }
+    const typeMeta = {
+      question: { icon: '❓', label: 'Вопрос' },
+      suggestion: { icon: '💡', label: 'Идея' },
+      bug: { icon: '🐞', label: 'Баг' },
+    };
+    const statusLabels = { open: 'Открыт', in_progress: 'В работе', answered: 'Отвечен', closed: 'Закрыт' };
+    tbody.innerHTML = SupportState.tickets.map((t) => {
+      const tm = typeMeta[t.type] || { icon: '📝', label: t.type };
+      const date = t.updatedAt ? new Date(t.updatedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      const sourceLabel = t.source === 'app' ? `App${t.appVersion ? ' v' + t.appVersion : ''}` : 'Сайт';
+      return `
+        <tr style="cursor:pointer" data-id="${t.id}">
+          <td><span style="font-family:monospace">#${t.id}</span></td>
+          <td><span title="${escapeHtml(tm.label)}" style="font-size:18px">${tm.icon}</span></td>
+          <td>
+            <div style="display:flex;align-items:center;gap:8px">
+              ${t.unreadForAdmin ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--accent-primary);flex-shrink:0" title="Непрочитано"></span>' : ''}
+              <span style="font-weight:${t.unreadForAdmin ? '600' : '400'}">${escapeHtml(t.subject)}</span>
+            </div>
+          </td>
+          <td>
+            <div style="font-size:12px">${escapeHtml(t.userName || '—')}</div>
+            <div class="text-xs text-muted">${escapeHtml(t.userEmail || '')}</div>
+          </td>
+          <td><span class="ticket-row-status ticket-status-${t.status}">${statusLabels[t.status]}</span></td>
+          <td><span class="text-xs text-muted">${escapeHtml(sourceLabel)}</span></td>
+          <td><span class="text-xs text-muted">${escapeHtml(date)}</span></td>
+        </tr>
+      `;
+    }).join('');
+    tbody.querySelectorAll('tr[data-id]').forEach((row) => {
+      row.addEventListener('click', () => openSupportTicket(parseInt(row.dataset.id, 10)));
+    });
+  }
+
+  async function openSupportTicket(id) {
+    showSupportSubview('detail');
+    $('sup-detail-header').innerHTML = '<span class="text-muted">Загрузка...</span>';
+    $('sup-messages').innerHTML = '';
+    try {
+      const data = await window.GosClient.support.get(id);
+      SupportState.current = data.ticket;
+      renderSupportDetail(data.ticket);
+    } catch (err) {
+      $('sup-detail-header').innerHTML = `<span class="text-muted">Ошибка: ${escapeHtml(err.message)}</span>`;
+    }
+    refreshAdminSupportBadge();
+  }
+
+  function renderSupportDetail(ticket) {
+    const typeLabels = { question: 'Вопрос', suggestion: 'Предложение', bug: 'Баг-репорт' };
+    const sourceLabel = ticket.source === 'app' ? `Приложение${ticket.appVersion ? ' v' + ticket.appVersion : ''}` : 'Сайт';
+    $('sup-detail-header').innerHTML = `
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">#${ticket.id} · ${escapeHtml(ticket.subject)}</div>
+      <div class="text-xs text-muted" style="display:flex;gap:14px;flex-wrap:wrap">
+        <span>${escapeHtml(typeLabels[ticket.type] || ticket.type)}</span>
+        <span>${escapeHtml(ticket.userName || '—')} (${escapeHtml(ticket.userEmail || '')})</span>
+        <span>Источник: ${escapeHtml(sourceLabel)}</span>
+        <span>Создан: ${escapeHtml(new Date(ticket.createdAt).toLocaleString('ru-RU'))}</span>
+      </div>
+    `;
+    $('sup-detail-status').value = ticket.status;
+    const msgsEl = $('sup-messages');
+    msgsEl.innerHTML = ticket.messages.map(renderSupportMessage).join('');
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    const closed = ticket.status === 'closed';
+    $('sup-reply-block').style.display = closed ? 'none' : '';
+    $('sup-reply-body').value = '';
+  }
+
+  function renderSupportMessage(m) {
+    const cls = m.isAdmin ? 'admin' : 'user';
+    const name = m.isAdmin ? (m.authorName || 'Поддержка') : (m.authorName || 'Пользователь');
+    const initial = (name.charAt(0) || '?').toUpperCase();
+    const date = m.createdAt ? new Date(m.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    return `
+      <div class="ticket-message ${cls}">
+        <div class="ticket-message-avatar">${escapeHtml(initial)}</div>
+        <div>
+          <div class="ticket-message-body">${escapeHtml(m.body)}</div>
+          <div class="ticket-message-meta">${escapeHtml(name)} · ${escapeHtml(date)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function sendSupportReply() {
+    const ticket = SupportState.current;
+    if (!ticket) return;
+    const text = $('sup-reply-body').value.trim();
+    if (!text) return;
+    const btn = $('btn-sup-reply');
+    btn.disabled = true;
+    try {
+      const data = await window.GosClient.support.reply(ticket.id, text);
+      SupportState.current = data.ticket;
+      renderSupportDetail(data.ticket);
+      toast('Ответ отправлен');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function changeSupportStatus() {
+    const ticket = SupportState.current;
+    if (!ticket) return;
+    const status = $('sup-detail-status').value;
+    if (status === ticket.status) return;
+    try {
+      const data = await window.GosClient.support.setStatus(ticket.id, status);
+      SupportState.current = data.ticket;
+      renderSupportDetail(data.ticket);
+      toast('Статус изменён');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+      $('sup-detail-status').value = ticket.status;
+    }
+  }
+
+  async function refreshAdminSupportBadge() {
+    try {
+      const data = await window.GosClient.support.unreadCount();
+      const badge = $('nav-support-badge');
+      if (!badge) return;
+      if (data.count > 0) {
+        badge.textContent = String(data.count);
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    } catch {}
+  }
+  setInterval(refreshAdminSupportBadge, 60000);
+  setTimeout(refreshAdminSupportBadge, 2000);
 
   // Periodic refresh of the nav dot — keeps admins aware
   async function pollMaintenanceStatus() {

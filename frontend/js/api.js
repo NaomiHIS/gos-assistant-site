@@ -150,6 +150,19 @@
       importServerJson: (data) => request('POST', '/parser/json/import-server', data),
       previewServerJson: (data) => request('POST', '/parser/json/preview-server', data),
     },
+
+    support: {
+      listMine: () => request('GET', '/support/tickets/mine'),
+      listAll: (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return request('GET', '/support/tickets/all' + (qs ? '?' + qs : ''));
+      },
+      get: (id) => request('GET', '/support/tickets/' + id),
+      create: (data) => request('POST', '/support/tickets', data),
+      reply: (id, body) => request('POST', '/support/tickets/' + id + '/messages', { body }),
+      setStatus: (id, status) => request('PUT', '/support/tickets/' + id + '/status', { status }),
+      unreadCount: () => request('GET', '/support/unread-count'),
+    },
   };
 
   // Toast helper

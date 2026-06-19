@@ -156,6 +156,38 @@ CREATE TABLE IF NOT EXISTS donate_links (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- Support tickets: user-submitted questions/suggestions/bug reports
+-- ============================================================
+CREATE TABLE IF NOT EXISTS support_tickets (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  type ENUM('question', 'suggestion', 'bug') NOT NULL DEFAULT 'question',
+  subject VARCHAR(255) NOT NULL,
+  status ENUM('open', 'in_progress', 'answered', 'closed') NOT NULL DEFAULT 'open',
+  source VARCHAR(16) NOT NULL DEFAULT 'site',
+  app_version VARCHAR(32) NULL,
+  unread_for_user TINYINT(1) NOT NULL DEFAULT 0,
+  unread_for_admin TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_status (status, updated_at),
+  INDEX idx_user (user_id, updated_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS support_messages (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_id INT NOT NULL,
+  author_id INT NULL,
+  is_admin TINYINT(1) NOT NULL DEFAULT 0,
+  body TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+  FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_ticket (ticket_id, created_at)
+) ENGINE=InnoDB;
+
+-- ============================================================
 -- Maintenance: single-row flag for app-wide tech work mode
 -- ============================================================
 CREATE TABLE IF NOT EXISTS maintenance (

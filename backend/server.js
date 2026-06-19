@@ -40,6 +40,7 @@ app.use('/api/releases', require('./routes/releases'));
 app.use('/api/donate', require('./routes/donate'));
 app.use('/api/devlog', require('./routes/devlog'));
 app.use('/api/maintenance', require('./routes/maintenance'));
+app.use('/api/support', require('./routes/support'));
 
 // Health check
 app.get('/api/health', async (req, res) => {

@@ -39,7 +39,9 @@
     setupPassword();
     setupDiscord();
     setupDownloads();
+    setupSupport();
     await loadData();
+    refreshSupportBadge();
     handleDiscordReturnParams();
   }
 
@@ -73,6 +75,7 @@
           p.classList.toggle('active', p.dataset.panel === tab);
           p.classList.toggle('hidden', p.dataset.panel !== tab);
         });
+        if (tab === 'support') loadTickets();
       });
     });
   }
@@ -480,6 +483,203 @@
     const re = new RegExp('(' + escaped + ')', 'gi');
     return safe.replace(re, '<mark style="background:var(--accent-soft);color:var(--accent-primary);padding:1px 3px;border-radius:3px">$1</mark>');
   }
+
+  // ============================================================
+  // Support
+  // ============================================================
+  const SupportState = { tickets: [], currentTicket: null, view: 'list' };
+
+  function setupSupport() {
+    $('btn-new-ticket').addEventListener('click', () => showSupportView('form'));
+    $('btn-cancel-ticket').addEventListener('click', () => showSupportView('list'));
+    $('btn-back-to-tickets').addEventListener('click', () => {
+      showSupportView('list');
+      loadTickets();
+    });
+    $('btn-submit-ticket').addEventListener('click', submitTicket);
+    $('btn-send-reply').addEventListener('click', sendReply);
+    $('ticket-body').addEventListener('input', (e) => {
+      $('ticket-body-counter').textContent = `${e.target.value.length} / 5000`;
+    });
+    $('ticket-reply').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendReply(); }
+    });
+  }
+
+  function showSupportView(name) {
+    SupportState.view = name;
+    $('support-list-view').classList.toggle('hidden', name !== 'list');
+    $('support-form-view').classList.toggle('hidden', name !== 'form');
+    $('support-detail-view').classList.toggle('hidden', name !== 'detail');
+    if (name === 'form') {
+      $('ticket-subject').value = '';
+      $('ticket-body').value = '';
+      $('ticket-body-counter').textContent = '0 / 5000';
+      $('ticket-form-error').textContent = '';
+      $('ticket-form-error').style.display = 'none';
+      document.querySelector('input[name="ticket-type"][value="question"]').checked = true;
+      setTimeout(() => $('ticket-subject').focus(), 50);
+    }
+  }
+
+  async function loadTickets() {
+    const listEl = $('tickets-list');
+    listEl.innerHTML = '<div class="text-sm text-muted" style="padding:8px 0">Загрузка...</div>';
+    try {
+      const data = await window.GosClient.support.listMine();
+      SupportState.tickets = data.tickets || [];
+      renderTickets();
+    } catch (err) {
+      listEl.innerHTML = `<div class="text-sm text-muted" style="padding:8px 0">Ошибка: ${escapeHtml(err.message)}</div>`;
+    }
+    refreshSupportBadge();
+  }
+
+  function renderTickets() {
+    const listEl = $('tickets-list');
+    if (SupportState.tickets.length === 0) {
+      listEl.innerHTML = `<div class="text-sm text-muted" style="padding:24px 8px;text-align:center">
+        У вас пока нет обращений.<br>Нажмите «+ Новое обращение», чтобы создать первое.
+      </div>`;
+      return;
+    }
+    listEl.innerHTML = SupportState.tickets.map(renderTicketRow).join('');
+    listEl.querySelectorAll('.ticket-row').forEach((row) => {
+      row.addEventListener('click', () => openTicket(parseInt(row.dataset.id, 10)));
+    });
+  }
+
+  function renderTicketRow(t) {
+    const typeMeta = {
+      question:   { icon: '❓', label: 'Вопрос' },
+      suggestion: { icon: '💡', label: 'Предложение' },
+      bug:        { icon: '🐞', label: 'Баг' },
+    }[t.type] || { icon: '📝', label: t.type };
+    const statusLabels = {
+      open: 'Открыт', in_progress: 'В работе', answered: 'Ответ', closed: 'Закрыт',
+    };
+    const date = t.updatedAt ? new Date(t.updatedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    return `
+      <div class="ticket-row" data-id="${t.id}">
+        <div class="ticket-row-type" title="${escapeHtml(typeMeta.label)}">${typeMeta.icon}</div>
+        <div class="ticket-row-main">
+          <div class="ticket-row-subject">${escapeHtml(t.subject)}</div>
+          <div class="ticket-row-meta">#${t.id} · ${escapeHtml(typeMeta.label)} · ${escapeHtml(date)}</div>
+        </div>
+        ${t.unreadForUser ? '<div class="ticket-row-unread" title="Новый ответ"></div>' : ''}
+        <div class="ticket-row-status ticket-status-${t.status}">${statusLabels[t.status] || t.status}</div>
+      </div>
+    `;
+  }
+
+  async function openTicket(id) {
+    showSupportView('detail');
+    $('ticket-detail-subject').textContent = 'Загрузка...';
+    $('ticket-detail-meta').textContent = '';
+    $('ticket-messages').innerHTML = '';
+    try {
+      const data = await window.GosClient.support.get(id);
+      SupportState.currentTicket = data.ticket;
+      renderTicketDetail(data.ticket);
+    } catch (err) {
+      $('ticket-detail-subject').textContent = 'Ошибка';
+      $('ticket-detail-meta').textContent = err.message;
+    }
+    refreshSupportBadge();
+  }
+
+  function renderTicketDetail(ticket) {
+    const typeLabels = { question: 'Вопрос', suggestion: 'Предложение', bug: 'Баг' };
+    const statusLabels = { open: 'Открыт', in_progress: 'В работе', answered: 'Ответ', closed: 'Закрыт' };
+    $('ticket-detail-subject').textContent = `#${ticket.id} · ${ticket.subject}`;
+    $('ticket-detail-meta').innerHTML = `
+      <span class="ticket-row-status ticket-status-${ticket.status}" style="font-size:10px">${statusLabels[ticket.status]}</span>
+      <span style="margin-left:8px">${escapeHtml(typeLabels[ticket.type] || ticket.type)}</span>
+      <span style="margin-left:8px">·</span>
+      <span style="margin-left:8px">${new Date(ticket.createdAt).toLocaleString('ru-RU')}</span>
+    `;
+    const msgsEl = $('ticket-messages');
+    msgsEl.innerHTML = ticket.messages.map((m) => renderMessage(m, ticket)).join('');
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+    const isClosed = ticket.status === 'closed';
+    $('ticket-reply-block').style.display = isClosed ? 'none' : '';
+    $('ticket-closed-note').classList.toggle('hidden', !isClosed);
+    $('ticket-reply').value = '';
+  }
+
+  function renderMessage(m, ticket) {
+    const cls = m.isAdmin ? 'admin' : 'user';
+    const name = m.isAdmin ? 'Поддержка' : (m.authorName || 'Вы');
+    const initial = name.charAt(0).toUpperCase();
+    const date = m.createdAt ? new Date(m.createdAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    return `
+      <div class="ticket-message ${cls}">
+        <div class="ticket-message-avatar">${escapeHtml(initial)}</div>
+        <div>
+          <div class="ticket-message-body">${escapeHtml(m.body)}</div>
+          <div class="ticket-message-meta">${escapeHtml(name)} · ${escapeHtml(date)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function submitTicket() {
+    const errEl = $('ticket-form-error');
+    errEl.style.display = 'none';
+    const type = document.querySelector('input[name="ticket-type"]:checked').value;
+    const subject = $('ticket-subject').value.trim();
+    const body = $('ticket-body').value.trim();
+    if (!subject) { errEl.textContent = 'Укажите тему'; errEl.style.display = 'block'; return; }
+    if (!body) { errEl.textContent = 'Опишите проблему или предложение'; errEl.style.display = 'block'; return; }
+    const btn = $('btn-submit-ticket');
+    btn.disabled = true;
+    try {
+      const data = await window.GosClient.support.create({ type, subject, body, source: 'site' });
+      toast('Обращение отправлено');
+      SupportState.currentTicket = data.ticket;
+      await loadTickets();
+      showSupportView('detail');
+      renderTicketDetail(data.ticket);
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function sendReply() {
+    const ticket = SupportState.currentTicket;
+    if (!ticket) return;
+    const text = $('ticket-reply').value.trim();
+    if (!text) return;
+    const btn = $('btn-send-reply');
+    btn.disabled = true;
+    try {
+      const data = await window.GosClient.support.reply(ticket.id, text);
+      SupportState.currentTicket = data.ticket;
+      renderTicketDetail(data.ticket);
+      toast('Сообщение отправлено');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function refreshSupportBadge() {
+    try {
+      const data = await window.GosClient.support.unreadCount();
+      const badge = $('support-badge');
+      if (data.count > 0) {
+        badge.textContent = String(data.count);
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    } catch {}
+  }
+  setInterval(refreshSupportBadge, 60000);
 
   // ============================================================
   // Start
