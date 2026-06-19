@@ -487,7 +487,14 @@
   // ============================================================
   // Support
   // ============================================================
-  const SupportState = { tickets: [], currentTicket: null, view: 'list' };
+  const SupportState = {
+    tickets: [],
+    currentTicket: null,
+    view: 'list',
+    pollTimer: null,
+    pollInflight: false,
+    lastRenderedMessageId: 0,
+  };
 
   function setupSupport() {
     $('btn-new-ticket').addEventListener('click', () => showSupportView('form'));
@@ -511,6 +518,7 @@
     $('support-list-view').classList.toggle('hidden', name !== 'list');
     $('support-form-view').classList.toggle('hidden', name !== 'form');
     $('support-detail-view').classList.toggle('hidden', name !== 'detail');
+    if (name !== 'detail') stopTicketPolling();
     if (name === 'form') {
       $('ticket-subject').value = '';
       $('ticket-body').value = '';
@@ -520,6 +528,67 @@
       document.querySelector('input[name="ticket-type"][value="question"]').checked = true;
       setTimeout(() => $('ticket-subject').focus(), 50);
     }
+  }
+
+  function startTicketPolling(ticketId) {
+    stopTicketPolling();
+    SupportState.pollTimer = setInterval(() => pollCurrentTicket(ticketId), 5000);
+  }
+
+  function stopTicketPolling() {
+    if (SupportState.pollTimer) {
+      clearInterval(SupportState.pollTimer);
+      SupportState.pollTimer = null;
+    }
+  }
+
+  async function pollCurrentTicket(ticketId) {
+    if (SupportState.pollInflight) return;
+    if (document.hidden) return; // browser tab is in background
+    if (SupportState.view !== 'detail') { stopTicketPolling(); return; }
+    if (!SupportState.currentTicket || SupportState.currentTicket.id !== ticketId) return;
+    SupportState.pollInflight = true;
+    try {
+      const data = await window.GosClient.support.get(ticketId);
+      if (!data.success || !data.ticket) return;
+      if (SupportState.view !== 'detail') return;
+      if (!SupportState.currentTicket || SupportState.currentTicket.id !== ticketId) return;
+
+      const prev = SupportState.currentTicket;
+      const next = data.ticket;
+      const prevLastId = prev.messages.length ? prev.messages[prev.messages.length - 1].id : 0;
+      const nextLastId = next.messages.length ? next.messages[next.messages.length - 1].id : 0;
+
+      // Re-render messages only when something changed (avoid disturbing the user)
+      if (nextLastId !== prevLastId || next.status !== prev.status) {
+        SupportState.currentTicket = next;
+        const wasAtBottom = isMessagesScrolledToBottom();
+        const replyText = $('ticket-reply').value; // preserve in-progress reply
+        renderTicketDetail(next);
+        $('ticket-reply').value = replyText;
+        if (wasAtBottom || nextLastId !== prevLastId) {
+          const el = $('ticket-messages');
+          el.scrollTop = el.scrollHeight;
+        }
+        // Audio cue if a new admin message arrived (optional, gentle)
+        const newAdminMsg = next.messages.find(
+          (m) => m.id > prevLastId && m.isAdmin
+        );
+        if (newAdminMsg) toast('Новый ответ от поддержки');
+      }
+      // Always refresh badge counter (it might have changed via mark-read)
+      refreshSupportBadge();
+    } catch {
+      // Silent — network blip
+    } finally {
+      SupportState.pollInflight = false;
+    }
+  }
+
+  function isMessagesScrolledToBottom() {
+    const el = $('ticket-messages');
+    if (!el) return true;
+    return Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 20;
   }
 
   async function loadTickets() {
@@ -581,6 +650,7 @@
       const data = await window.GosClient.support.get(id);
       SupportState.currentTicket = data.ticket;
       renderTicketDetail(data.ticket);
+      startTicketPolling(id);
     } catch (err) {
       $('ticket-detail-subject').textContent = 'Ошибка';
       $('ticket-detail-meta').textContent = err.message;
@@ -640,6 +710,7 @@
       await loadTickets();
       showSupportView('detail');
       renderTicketDetail(data.ticket);
+      startTicketPolling(data.ticket.id);
     } catch (err) {
       errEl.textContent = err.message;
       errEl.style.display = 'block';
@@ -659,7 +730,8 @@
       const data = await window.GosClient.support.reply(ticket.id, text);
       SupportState.currentTicket = data.ticket;
       renderTicketDetail(data.ticket);
-      toast('Сообщение отправлено');
+      const msgsEl = $('ticket-messages');
+      msgsEl.scrollTop = msgsEl.scrollHeight;
     } catch (err) {
       toast('Ошибка: ' + err.message);
     } finally {

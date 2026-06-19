@@ -1548,7 +1548,14 @@
   // ============================================================
   // Support view (admin)
   // ============================================================
-  const SupportState = { initialized: false, tickets: [], current: null, view: 'list' };
+  const SupportState = {
+    initialized: false,
+    tickets: [],
+    current: null,
+    view: 'list',
+    pollTimer: null,
+    pollInflight: false,
+  };
 
   function initSupportView() {
     loadSupportTickets();
@@ -1580,6 +1587,58 @@
     SupportState.view = name;
     $('sup-list-view').classList.toggle('hidden', name !== 'list');
     $('sup-detail-view').classList.toggle('hidden', name !== 'detail');
+    if (name !== 'detail') stopSupportPolling();
+  }
+
+  function startSupportPolling(ticketId) {
+    stopSupportPolling();
+    SupportState.pollTimer = setInterval(() => pollSupportTicket(ticketId), 5000);
+  }
+
+  function stopSupportPolling() {
+    if (SupportState.pollTimer) {
+      clearInterval(SupportState.pollTimer);
+      SupportState.pollTimer = null;
+    }
+  }
+
+  async function pollSupportTicket(ticketId) {
+    if (SupportState.pollInflight) return;
+    if (document.hidden) return;
+    if (SupportState.view !== 'detail') { stopSupportPolling(); return; }
+    if (!SupportState.current || SupportState.current.id !== ticketId) return;
+    SupportState.pollInflight = true;
+    try {
+      const data = await window.GosClient.support.get(ticketId);
+      if (!data.success || !data.ticket) return;
+      if (SupportState.view !== 'detail') return;
+      if (!SupportState.current || SupportState.current.id !== ticketId) return;
+
+      const prev = SupportState.current;
+      const next = data.ticket;
+      const prevLastId = prev.messages.length ? prev.messages[prev.messages.length - 1].id : 0;
+      const nextLastId = next.messages.length ? next.messages[next.messages.length - 1].id : 0;
+
+      if (nextLastId !== prevLastId || next.status !== prev.status) {
+        SupportState.current = next;
+        const el = $('sup-messages');
+        const wasAtBottom = el ? Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 20 : true;
+        const replyText = $('sup-reply-body').value;
+        renderSupportDetail(next);
+        $('sup-reply-body').value = replyText;
+        if (wasAtBottom || nextLastId !== prevLastId) {
+          const m = $('sup-messages');
+          m.scrollTop = m.scrollHeight;
+        }
+        const newUserMsg = next.messages.find((m) => m.id > prevLastId && !m.isAdmin);
+        if (newUserMsg) toast('Новое сообщение от пользователя');
+      }
+      refreshAdminSupportBadge();
+    } catch {
+      // ignore
+    } finally {
+      SupportState.pollInflight = false;
+    }
   }
 
   async function loadSupportTickets() {
@@ -1653,6 +1712,7 @@
       const data = await window.GosClient.support.get(id);
       SupportState.current = data.ticket;
       renderSupportDetail(data.ticket);
+      startSupportPolling(id);
     } catch (err) {
       $('sup-detail-header').innerHTML = `<span class="text-muted">Ошибка: ${escapeHtml(err.message)}</span>`;
     }
@@ -1707,7 +1767,8 @@
       const data = await window.GosClient.support.reply(ticket.id, text);
       SupportState.current = data.ticket;
       renderSupportDetail(data.ticket);
-      toast('Ответ отправлен');
+      const m = $('sup-messages');
+      m.scrollTop = m.scrollHeight;
     } catch (err) {
       toast('Ошибка: ' + err.message);
     } finally {
