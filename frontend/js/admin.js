@@ -2030,9 +2030,12 @@
   async function searchUsersForGrant(q) {
     try {
       const data = await window.GosClient.users.list();
-      const users = (data.users || []).filter((u) => {
+      // /api/users returns the array directly, not { users: [...] }
+      const all = Array.isArray(data) ? data : (data.users || []);
+      const ql = q.toLowerCase();
+      const users = all.filter((u) => {
         const hay = ((u.email || '') + ' ' + (u.username || '')).toLowerCase();
-        return hay.includes(q.toLowerCase());
+        return hay.includes(ql);
       }).slice(0, 8);
       const el = $('grant-user-results');
       if (users.length === 0) {
