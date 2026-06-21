@@ -55,6 +55,21 @@ async function initDatabase(force = false) {
 // Idempotent migrations — run on every startup, safe to re-run.
 // Use these to add new tables/columns introduced after first install.
 // ============================================================
+async function ensureColumn(table, column, definition) {
+  try {
+    const rows = await db.query(
+      `SELECT COUNT(*) AS cnt FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+      [table, column]
+    );
+    if (rows[0]?.cnt > 0) return;
+    await db.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+    console.log(`[InitDB] ✓ added column ${table}.${column}`);
+  } catch (err) {
+    console.warn(`[InitDB] ensureColumn ${table}.${column} warning:`, err.message);
+  }
+}
+
 async function runMigrations() {
   try {
     await db.query(`
@@ -96,12 +111,21 @@ async function runMigrations() {
         description TEXT NULL,
         color VARCHAR(16) NULL DEFAULT '#DF005B',
         features JSON NULL,
+        price_cents INT NOT NULL DEFAULT 0,
+        currency VARCHAR(8) NOT NULL DEFAULT 'RUB',
+        duration_days INT NOT NULL DEFAULT 30,
+        is_purchasable TINYINT(1) NOT NULL DEFAULT 0,
         sort_order INT NOT NULL DEFAULT 0,
         is_active TINYINT(1) NOT NULL DEFAULT 1,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       ) ENGINE=InnoDB
     `);
+    // Идемпотентные ALTER — для существующих БД без новых колонок
+    await ensureColumn('subscription_plans', 'price_cents', 'INT NOT NULL DEFAULT 0');
+    await ensureColumn('subscription_plans', 'currency', "VARCHAR(8) NOT NULL DEFAULT 'RUB'");
+    await ensureColumn('subscription_plans', 'duration_days', 'INT NOT NULL DEFAULT 30');
+    await ensureColumn('subscription_plans', 'is_purchasable', 'TINYINT(1) NOT NULL DEFAULT 0');
     await db.query(`
       CREATE TABLE IF NOT EXISTS user_subscriptions (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -118,16 +142,79 @@ async function runMigrations() {
         INDEX idx_expires (expires_at, is_active)
       ) ENGINE=InnoDB
     `);
-    // Default Premium plan with sensible feature set
+    // Default plans: Lite (без AI) и Premium (с AI)
     await db.query(
-      `INSERT IGNORE INTO subscription_plans (slug, name, description, color, features, sort_order)
+      `INSERT IGNORE INTO subscription_plans (slug, name, description, color, features, price_cents, currency, duration_days, is_purchasable, sort_order)
+       VALUES ('lite', 'Lite',
+               'Базовая подписка: безлимит заметок, темы, без рекламы',
+               '#7B2BFF',
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'no_ads'),
+               14900, 'RUB', 30, 1, 5)`
+    );
+    await db.query(
+      `INSERT IGNORE INTO subscription_plans (slug, name, description, color, features, price_cents, currency, duration_days, is_purchasable, sort_order)
        VALUES ('premium', 'Premium',
-               'Расширенный доступ к функциям приложения и сайта',
+               'Полный доступ: AI-ассистент, приоритетная поддержка, ранний доступ',
                '#DF005B',
                JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant'),
-               10)`
+               29900, 'RUB', 30, 1, 10)`
     );
     console.log('[InitDB] ✓ subscription tables ensured');
+
+    // ============================================================
+    // Payments: providers (YooKassa, manual, ...) + transactions
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS payment_providers (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        slug VARCHAR(32) NOT NULL UNIQUE,
+        name VARCHAR(128) NOT NULL,
+        description TEXT NULL,
+        config JSON NULL,
+        is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        plan_id INT NOT NULL,
+        provider_slug VARCHAR(32) NOT NULL,
+        amount_cents INT NOT NULL,
+        currency VARCHAR(8) NOT NULL DEFAULT 'RUB',
+        status ENUM('pending','succeeded','canceled','failed','refunded') NOT NULL DEFAULT 'pending',
+        external_id VARCHAR(128) NULL,
+        confirmation_url VARCHAR(1024) NULL,
+        metadata JSON NULL,
+        granted_subscription_id INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        paid_at TIMESTAMP NULL,
+        INDEX idx_user (user_id, created_at),
+        INDEX idx_status (status, created_at),
+        INDEX idx_external (provider_slug, external_id)
+      ) ENGINE=InnoDB
+    `);
+
+    // Сидим базовых провайдеров — оба выключены, админ включит через UI
+    await db.query(
+      `INSERT IGNORE INTO payment_providers (slug, name, description, config, is_enabled, sort_order)
+       VALUES ('yookassa', 'ЮKassa',
+               'Онлайн-оплата картами и СБП через ЮKassa',
+               JSON_OBJECT('shop_id', '', 'secret_key', '', 'return_url', ''),
+               0, 10)`
+    );
+    await db.query(
+      `INSERT IGNORE INTO payment_providers (slug, name, description, config, is_enabled, sort_order)
+       VALUES ('manual', 'Ручная выдача',
+               'Заявка на оплату — админ выдаёт подписку после поступления средств',
+               JSON_OBJECT('instructions', ''),
+               1, 90)`
+    );
+    console.log('[InitDB] ✓ payment tables ensured');
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (

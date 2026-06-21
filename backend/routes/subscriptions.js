@@ -35,7 +35,9 @@ async function loadCurrentSubscription(userId) {
     `SELECT us.id, us.plan_id AS planId, us.starts_at AS startsAt, us.expires_at AS expiresAt,
             us.is_active AS isActive, us.granted_by AS grantedBy, us.notes,
             p.slug, p.name AS planName, p.description AS planDescription,
-            p.color AS planColor, p.features AS planFeatures
+            p.color AS planColor, p.features AS planFeatures,
+            p.price_cents AS planPriceCents, p.currency AS planCurrency,
+            p.duration_days AS planDurationDays
        FROM user_subscriptions us
        JOIN subscription_plans p ON p.id = us.plan_id
       WHERE us.user_id = ?
@@ -58,6 +60,9 @@ async function loadCurrentSubscription(userId) {
       description: row.planDescription,
       color: row.planColor,
       features,
+      priceCents: row.planPriceCents || 0,
+      currency: row.planCurrency || 'RUB',
+      durationDays: row.planDurationDays || 30,
     },
     startsAt: row.startsAt,
     expiresAt: row.expiresAt,
@@ -92,10 +97,34 @@ router.get('/me', requireAuth, async (req, res) => {
 router.get('/plans', requireAuth, async (req, res) => {
   try {
     const isAdmin = req.user.role === 'admin';
+    const baseCols = 'id, slug, name, description, color, features, price_cents AS priceCents, currency, duration_days AS durationDays, is_purchasable AS isPurchasable, sort_order AS sortOrder';
     const sql = isAdmin
-      ? 'SELECT id, slug, name, description, color, features, sort_order AS sortOrder, is_active AS isActive, created_at AS createdAt, updated_at AS updatedAt FROM subscription_plans ORDER BY sort_order ASC, id ASC'
-      : 'SELECT id, slug, name, description, color, features, sort_order AS sortOrder FROM subscription_plans WHERE is_active = 1 ORDER BY sort_order ASC, id ASC';
+      ? `SELECT ${baseCols}, is_active AS isActive, created_at AS createdAt, updated_at AS updatedAt FROM subscription_plans ORDER BY sort_order ASC, id ASC`
+      : `SELECT ${baseCols} FROM subscription_plans WHERE is_active = 1 ORDER BY sort_order ASC, id ASC`;
     const rows = await db.query(sql);
+    res.json({
+      success: true,
+      plans: rows.map((p) => ({ ...p, features: parseFeatures(p.features) })),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// GET /api/subscriptions/plans/public — без auth, только покупаемые планы
+// для публичной страницы /pricing.html
+// ============================================================
+router.get('/plans/public', async (req, res) => {
+  try {
+    const rows = await db.query(
+      `SELECT id, slug, name, description, color, features,
+              price_cents AS priceCents, currency, duration_days AS durationDays,
+              sort_order AS sortOrder
+         FROM subscription_plans
+        WHERE is_active = 1 AND is_purchasable = 1
+        ORDER BY sort_order ASC, id ASC`
+    );
     res.json({
       success: true,
       plans: rows.map((p) => ({ ...p, features: parseFeatures(p.features) })),
@@ -111,19 +140,29 @@ router.get('/plans', requireAuth, async (req, res) => {
 // ============================================================
 router.post('/plans', requireAuth, requireRole('admin'), async (req, res) => {
   try {
-    const { slug, name, description, color, features, sortOrder, isActive } = req.body || {};
+    const { slug, name, description, color, features, priceCents, currency, durationDays, isPurchasable, sortOrder, isActive } = req.body || {};
     if (!slug || !name) return res.status(400).json({ error: 'slug и name обязательны' });
     const cleanSlug = String(slug).trim().toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 64);
     if (!cleanSlug) return res.status(400).json({ error: 'Неверный slug' });
     const feats = Array.isArray(features) ? features.filter((f) => typeof f === 'string') : [];
     await db.query(
-      `INSERT INTO subscription_plans (slug, name, description, color, features, sort_order, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO subscription_plans (slug, name, description, color, features, price_cents, currency, duration_days, is_purchasable, sort_order, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [cleanSlug, String(name).slice(0, 128), description || null,
        color || '#DF005B', JSON.stringify(feats),
+       Math.max(0, parseInt(priceCents, 10) || 0),
+       (currency || 'RUB').toUpperCase().slice(0, 8),
+       Math.max(1, parseInt(durationDays, 10) || 30),
+       isPurchasable ? 1 : 0,
        sortOrder || 0, isActive === false ? 0 : 1]
     );
-    const row = await db.queryOne('SELECT id, slug, name, description, color, features, sort_order AS sortOrder, is_active AS isActive FROM subscription_plans WHERE slug = ?', [cleanSlug]);
+    const row = await db.queryOne(
+      `SELECT id, slug, name, description, color, features, price_cents AS priceCents,
+              currency, duration_days AS durationDays, is_purchasable AS isPurchasable,
+              sort_order AS sortOrder, is_active AS isActive
+         FROM subscription_plans WHERE slug = ?`,
+      [cleanSlug]
+    );
     res.json({ success: true, plan: { ...row, features: parseFeatures(row.features) } });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'План с таким slug уже существует' });
@@ -138,7 +177,7 @@ router.put('/plans/:id', requireAuth, requireRole('admin'), async (req, res) => 
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ error: 'Неверный id' });
-    const { name, description, color, features, sortOrder, isActive } = req.body || {};
+    const { name, description, color, features, priceCents, currency, durationDays, isPurchasable, sortOrder, isActive } = req.body || {};
     const feats = Array.isArray(features) ? features.filter((f) => typeof f === 'string') : [];
     await db.query(
       `UPDATE subscription_plans
@@ -146,15 +185,29 @@ router.put('/plans/:id', requireAuth, requireRole('admin'), async (req, res) => 
               description = ?,
               color = COALESCE(?, color),
               features = ?,
+              price_cents = COALESCE(?, price_cents),
+              currency = COALESCE(?, currency),
+              duration_days = COALESCE(?, duration_days),
+              is_purchasable = COALESCE(?, is_purchasable),
               sort_order = COALESCE(?, sort_order),
               is_active = COALESCE(?, is_active)
         WHERE id = ?`,
       [name || null, description || null, color || null, JSON.stringify(feats),
+       priceCents != null ? Math.max(0, parseInt(priceCents, 10) || 0) : null,
+       currency ? String(currency).toUpperCase().slice(0, 8) : null,
+       durationDays != null ? Math.max(1, parseInt(durationDays, 10) || 30) : null,
+       isPurchasable != null ? (isPurchasable ? 1 : 0) : null,
        sortOrder != null ? sortOrder : null,
        isActive != null ? (isActive ? 1 : 0) : null,
        id]
     );
-    const row = await db.queryOne('SELECT id, slug, name, description, color, features, sort_order AS sortOrder, is_active AS isActive FROM subscription_plans WHERE id = ?', [id]);
+    const row = await db.queryOne(
+      `SELECT id, slug, name, description, color, features, price_cents AS priceCents,
+              currency, duration_days AS durationDays, is_purchasable AS isPurchasable,
+              sort_order AS sortOrder, is_active AS isActive
+         FROM subscription_plans WHERE id = ?`,
+      [id]
+    );
     if (!row) return res.status(404).json({ error: 'План не найден' });
     res.json({ success: true, plan: { ...row, features: parseFeatures(row.features) } });
   } catch (err) {
@@ -352,6 +405,35 @@ router.delete('/grants/:id', requireAuth, requireRole('admin'), async (req, res)
   }
 });
 
+// ============================================================
+// Внутренний хелпер: выдать подписку (используется и админкой, и платежами)
+// Возвращает id новой записи user_subscriptions.
+// ============================================================
+async function grantSubscription({ userId, planId, durationDays, expiresAt, grantedBy, notes }) {
+  let expiresAtSql;
+  if (expiresAt) {
+    const d = new Date(expiresAt);
+    if (isNaN(d.getTime())) throw new Error('Неверная дата окончания');
+    expiresAtSql = d.toISOString().slice(0, 19).replace('T', ' ');
+  } else {
+    const days = Math.max(1, parseInt(durationDays, 10) || 30);
+    const d = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    expiresAtSql = d.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  // Single-active: отзываем старые
+  await db.query(
+    'UPDATE user_subscriptions SET is_active = 0, revoked_at = NOW() WHERE user_id = ? AND is_active = 1',
+    [userId]
+  );
+  const result = await db.query(
+    `INSERT INTO user_subscriptions (user_id, plan_id, expires_at, is_active, granted_by, notes)
+     VALUES (?, ?, ?, 1, ?, ?)`,
+    [userId, planId, expiresAtSql, grantedBy || null, notes ? String(notes).slice(0, 255) : null]
+  );
+  return result.insertId;
+}
+
 module.exports = router;
 module.exports.loadCurrentSubscription = loadCurrentSubscription;
+module.exports.grantSubscription = grantSubscription;
 module.exports.KNOWN_FEATURES = KNOWN_FEATURES;

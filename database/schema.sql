@@ -165,10 +165,55 @@ CREATE TABLE IF NOT EXISTS subscription_plans (
   description TEXT NULL,
   color VARCHAR(16) NULL DEFAULT '#DF005B',
   features JSON NULL,
+  price_cents INT NOT NULL DEFAULT 0,
+  currency VARCHAR(8) NOT NULL DEFAULT 'RUB',
+  duration_days INT NOT NULL DEFAULT 30,
+  is_purchasable TINYINT(1) NOT NULL DEFAULT 0,
   sort_order INT NOT NULL DEFAULT 0,
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ============================================================
+-- Payment providers (YooKassa, manual, …) — admin-managed
+-- ============================================================
+CREATE TABLE IF NOT EXISTS payment_providers (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  slug VARCHAR(32) NOT NULL UNIQUE,
+  name VARCHAR(128) NOT NULL,
+  description TEXT NULL,
+  config JSON NULL,
+  is_enabled TINYINT(1) NOT NULL DEFAULT 0,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ============================================================
+-- Payments / transactions
+-- ============================================================
+CREATE TABLE IF NOT EXISTS payments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  plan_id INT NOT NULL,
+  provider_slug VARCHAR(32) NOT NULL,
+  amount_cents INT NOT NULL,
+  currency VARCHAR(8) NOT NULL DEFAULT 'RUB',
+  status ENUM('pending','succeeded','canceled','failed','refunded') NOT NULL DEFAULT 'pending',
+  external_id VARCHAR(128) NULL,
+  confirmation_url VARCHAR(1024) NULL,
+  metadata JSON NULL,
+  granted_subscription_id INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  paid_at TIMESTAMP NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE RESTRICT,
+  FOREIGN KEY (granted_subscription_id) REFERENCES user_subscriptions(id) ON DELETE SET NULL,
+  INDEX idx_user (user_id, created_at),
+  INDEX idx_status (status, created_at),
+  INDEX idx_external (provider_slug, external_id)
 ) ENGINE=InnoDB;
 
 -- ============================================================

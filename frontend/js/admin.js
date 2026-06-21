@@ -86,6 +86,7 @@
     if (name === 'maintenance') initMaintenanceView();
     if (name === 'support') initSupportView();
     if (name === 'subscriptions') initSubscriptionsView();
+    if (name === 'payments') initPaymentsView();
   }
 
   // ============================================================
@@ -1933,6 +1934,10 @@
     $('plan-color').value = plan ? (plan.color || '#DF005B') : '#DF005B';
     $('plan-sort').value = plan ? (plan.sortOrder || 0) : 0;
     $('plan-active').checked = plan ? !!plan.isActive : true;
+    $('plan-price').value = plan ? Math.round((plan.priceCents || 0) / 100) : 0;
+    $('plan-currency').value = plan ? (plan.currency || 'RUB') : 'RUB';
+    $('plan-duration').value = plan ? (plan.durationDays || 30) : 30;
+    $('plan-purchasable').checked = plan ? !!plan.isPurchasable : false;
     $('btn-delete-plan').style.display = plan ? '' : 'none';
     renderFeaturesList(plan ? (plan.features || []) : []);
     document.getElementById('modal-plan').classList.add('open');
@@ -1995,6 +2000,10 @@
       sortOrder: parseInt($('plan-sort').value, 10) || 0,
       isActive: $('plan-active').checked,
       features: collectSelectedFeatures(),
+      priceCents: Math.max(0, parseInt($('plan-price').value, 10) || 0) * 100,
+      currency: $('plan-currency').value || 'RUB',
+      durationDays: Math.max(1, parseInt($('plan-duration').value, 10) || 30),
+      isPurchasable: $('plan-purchasable').checked,
     };
     const btn = $('btn-save-plan');
     btn.disabled = true;
@@ -2192,6 +2201,242 @@
       toast('Подписка активирована на 7 дн.');
       await loadGrants();
     } catch (err) { toast('Ошибка: ' + err.message); }
+  }
+
+  // ============================================================
+  // Payments view
+  // ============================================================
+  const PaymentsState = {
+    providers: [],
+    payments: [],
+    editingProvider: null,
+    inited: false,
+  };
+
+  function initPaymentsView() {
+    loadPaymentsAll();
+    if (PaymentsState.inited) return;
+    PaymentsState.inited = true;
+
+    $('btn-refresh-payments').addEventListener('click', loadPaymentsAll);
+    $('btn-new-provider').addEventListener('click', () => openProviderModal(null));
+    $('btn-save-provider').addEventListener('click', saveProvider);
+    $('btn-delete-provider').addEventListener('click', deleteProvider);
+    $('pmt-filter-status').addEventListener('change', loadPaymentsList);
+    $('pmt-filter-provider').addEventListener('change', loadPaymentsList);
+    let searchTimer = null;
+    $('pmt-search').addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(loadPaymentsList, 350);
+    });
+  }
+
+  async function loadPaymentsAll() {
+    await Promise.all([loadProviders(), loadPaymentsList()]);
+  }
+
+  async function loadProviders() {
+    try {
+      const data = await window.GosClient.payments.listProviders();
+      PaymentsState.providers = data.providers || [];
+      renderProviders();
+      // также наполняем фильтр в списке транзакций
+      const sel = $('pmt-filter-provider');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">Все провайдеры</option>' +
+        PaymentsState.providers.map((p) => `<option value="${escapeHtml(p.slug)}">${escapeHtml(p.name)}</option>`).join('');
+      sel.value = current;
+    } catch (err) {
+      $('providers-list').innerHTML = `<div class="text-sm" style="color:var(--danger)">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderProviders() {
+    const cont = $('providers-list');
+    if (!PaymentsState.providers.length) {
+      cont.innerHTML = '<div class="text-sm text-muted">Способы оплаты не настроены.</div>';
+      return;
+    }
+    cont.innerHTML = PaymentsState.providers.map((p) => {
+      const cfg = p.config || {};
+      const hasShop = cfg.shop_id ? '✓' : '—';
+      const hasSecret = cfg.secret_key ? '✓' : '—';
+      const meta = p.slug === 'yookassa'
+        ? `shop_id: ${hasShop} · secret_key: ${hasSecret}`
+        : (p.description || '');
+      return `
+        <div class="provider-card" data-slug="${escapeHtml(p.slug)}">
+          <div class="provider-card-head">
+            <div class="provider-card-name">${escapeHtml(p.name)}</div>
+            <span class="provider-card-status ${p.isEnabled ? 'on' : 'off'}">${p.isEnabled ? 'Включён' : 'Выключен'}</span>
+          </div>
+          <div class="provider-card-slug">${escapeHtml(p.slug)}</div>
+          <div class="provider-card-meta">${escapeHtml(meta)}</div>
+          <button class="btn btn-secondary btn-sm" data-edit="${p.id}">Настройки</button>
+        </div>
+      `;
+    }).join('');
+    cont.querySelectorAll('[data-edit]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.dataset.edit, 10);
+        const prov = PaymentsState.providers.find((p) => p.id === id);
+        if (prov) openProviderModal(prov);
+      });
+    });
+  }
+
+  function openProviderModal(provider) {
+    PaymentsState.editingProvider = provider;
+    $('modal-provider-title').textContent = provider ? 'Настройка: ' + provider.name : 'Новый способ оплаты';
+    $('provider-slug').value = provider ? provider.slug : '';
+    $('provider-slug').disabled = !!provider;
+    $('provider-name').value = provider ? provider.name : '';
+    $('provider-description').value = provider ? (provider.description || '') : '';
+    $('provider-sort').value = provider ? (provider.sortOrder || 0) : 0;
+    $('provider-enabled').checked = provider ? !!provider.isEnabled : true;
+    $('provider-config').value = provider ? JSON.stringify(provider.config || {}, null, 2) : '{}';
+    $('btn-delete-provider').style.display = (provider && provider.slug !== 'yookassa' && provider.slug !== 'manual') ? '' : 'none';
+    document.getElementById('modal-provider').classList.add('open');
+  }
+
+  async function saveProvider() {
+    const slug = $('provider-slug').value.trim();
+    const name = $('provider-name').value.trim();
+    if (!slug || !name) { toast('Укажите slug и название'); return; }
+    let config;
+    try {
+      config = JSON.parse($('provider-config').value || '{}');
+    } catch {
+      toast('Конфиг не валидный JSON');
+      return;
+    }
+    const payload = {
+      slug,
+      name,
+      description: $('provider-description').value.trim() || null,
+      sortOrder: parseInt($('provider-sort').value, 10) || 0,
+      isEnabled: $('provider-enabled').checked,
+      config,
+    };
+    const btn = $('btn-save-provider');
+    btn.disabled = true;
+    try {
+      if (PaymentsState.editingProvider) {
+        await window.GosClient.payments.updateProvider(PaymentsState.editingProvider.id, payload);
+      } else {
+        await window.GosClient.payments.createProvider(payload);
+      }
+      document.getElementById('modal-provider').classList.remove('open');
+      await loadProviders();
+      toast('Сохранено');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteProvider() {
+    if (!PaymentsState.editingProvider) return;
+    if (!confirm('Удалить провайдер «' + PaymentsState.editingProvider.name + '»?')) return;
+    try {
+      await window.GosClient.payments.deleteProvider(PaymentsState.editingProvider.id);
+      document.getElementById('modal-provider').classList.remove('open');
+      await loadProviders();
+      toast('Удалён');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    }
+  }
+
+  async function loadPaymentsList() {
+    try {
+      const params = {
+        status: $('pmt-filter-status').value,
+        providerSlug: $('pmt-filter-provider').value,
+        search: $('pmt-search').value.trim(),
+      };
+      Object.keys(params).forEach((k) => { if (!params[k]) delete params[k]; });
+      const data = await window.GosClient.payments.listAll(params);
+      PaymentsState.payments = data.payments || [];
+      renderPaymentsTable();
+    } catch (err) {
+      $('payments-table').innerHTML = `<tr><td colspan="8" class="text-sm" style="color:var(--danger);padding:14px">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function fmtAmount(cents, currency) {
+    const ccy = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₽';
+    return (cents / 100).toFixed(2) + ' ' + ccy;
+  }
+
+  function fmtDate(s) {
+    if (!s) return '—';
+    try {
+      return new Date(s).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch { return s; }
+  }
+
+  function statusBadge(status) {
+    const map = {
+      pending: { label: 'Ожидает', cls: 'pmt-status-pending' },
+      succeeded: { label: 'Оплачено', cls: 'pmt-status-succeeded' },
+      canceled: { label: 'Отменён', cls: 'pmt-status-canceled' },
+      failed: { label: 'Ошибка', cls: 'pmt-status-failed' },
+      refunded: { label: 'Возврат', cls: 'pmt-status-refunded' },
+    };
+    const s = map[status] || { label: status, cls: '' };
+    return `<span class="pmt-status ${s.cls}">${s.label}</span>`;
+  }
+
+  function renderPaymentsTable() {
+    const tbody = $('payments-table');
+    if (!PaymentsState.payments.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-sm text-muted" style="padding:14px;text-align:center">Платежей нет</td></tr>';
+      return;
+    }
+    tbody.innerHTML = PaymentsState.payments.map((p) => {
+      const isPending = p.status === 'pending';
+      const actions = [];
+      if (isPending) {
+        actions.push(`<button class="btn btn-primary btn-xs" data-mark="${p.id}" data-status="succeeded">Подтвердить</button>`);
+        actions.push(`<button class="btn btn-secondary btn-xs" data-mark="${p.id}" data-status="canceled">Отменить</button>`);
+      }
+      if (p.confirmationUrl) {
+        actions.push(`<a class="btn btn-secondary btn-xs" href="${escapeHtml(p.confirmationUrl)}" target="_blank">Ссылка</a>`);
+      }
+      return `
+        <tr>
+          <td class="text-sm text-muted">#${p.id}</td>
+          <td>
+            <div class="text-sm">${escapeHtml(p.userName || '—')}</div>
+            <div class="text-xs text-muted">${escapeHtml(p.userEmail || '')}</div>
+          </td>
+          <td>
+            <span class="badge" style="background:${escapeHtml(p.planColor || '#666')}">${escapeHtml(p.planName || '—')}</span>
+          </td>
+          <td class="text-sm">${fmtAmount(p.amountCents, p.currency)}</td>
+          <td class="text-sm">${escapeHtml(p.providerSlug)}</td>
+          <td>${statusBadge(p.status)}</td>
+          <td class="text-xs text-muted">${fmtDate(p.createdAt)}</td>
+          <td class="flex gap-1">${actions.join('')}</td>
+        </tr>
+      `;
+    }).join('');
+    tbody.querySelectorAll('[data-mark]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const id = parseInt(btn.dataset.mark, 10);
+        const status = btn.dataset.status;
+        if (status === 'succeeded' && !confirm('Подтвердить платёж #' + id + '? Юзеру будет выдана подписка.')) return;
+        try {
+          await window.GosClient.payments.mark(id, status);
+          await loadPaymentsList();
+          toast('Платёж обновлён');
+        } catch (err) {
+          toast('Ошибка: ' + err.message);
+        }
+      });
+    });
   }
 
   // Periodic refresh of the nav dot — keeps admins aware

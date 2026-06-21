@@ -43,6 +43,7 @@ app.use('/api/maintenance', require('./routes/maintenance'));
 app.use('/api/support', require('./routes/support'));
 app.use('/api/subscriptions', require('./routes/subscriptions'));
 app.use('/api/ai', require('./routes/ai'));
+app.use('/api/payments', require('./routes/payments'));
 
 // Health check
 app.get('/api/health', async (req, res) => {

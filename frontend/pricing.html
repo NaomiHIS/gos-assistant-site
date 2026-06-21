@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Тарифы — GOS Assistant</title>
+  <meta name="description" content="Подписки GOS Assistant: Lite и Premium. Расширенные функции приложения, AI-ассистент по законам RP." />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="brand">
+        <div class="brand-icon">GA</div>
+        <span>GOS Assistant</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#features" class="nav-link">Возможности</a>
+        <a href="/pricing.html" class="nav-link active">Тарифы</a>
+        <a href="/devlog.html" class="nav-link">DevLog</a>
+        <a href="/login.html" class="nav-link" data-auth="guest">Войти</a>
+        <a href="/cabinet.html" class="nav-link hidden" data-auth="user">Личный кабинет</a>
+      </div>
+      <div class="nav-actions">
+        <a href="/login.html" class="btn btn-secondary btn-sm" data-auth="guest">Войти</a>
+        <a href="/login.html?mode=register" class="btn btn-primary btn-sm" data-auth="guest">Регистрация</a>
+        <a href="/cabinet.html" class="btn btn-primary btn-sm hidden" data-auth="user">Личный кабинет</a>
+      </div>
+    </div>
+  </nav>
+
+  <section class="pricing-hero">
+    <div class="container">
+      <h1 class="pricing-title">Подписки</h1>
+      <p class="pricing-subtitle">Выбери план под свой стиль игры. Оплата ежемесячная, можно отменить в любой момент.</p>
+    </div>
+  </section>
+
+  <section class="pricing-section">
+    <div class="container">
+      <div id="pricing-cards" class="pricing-cards">
+        <div class="text-sm text-muted" style="grid-column:1/-1;text-align:center;padding:40px 0">Загружаем тарифы…</div>
+      </div>
+
+      <div class="pricing-faq">
+        <h2>Частые вопросы</h2>
+        <details>
+          <summary>Как происходит оплата?</summary>
+          <p>Через ЮKassa: банковские карты, СБП, ЮMoney. После оплаты подписка активируется автоматически в течение минуты.</p>
+        </details>
+        <details>
+          <summary>Что если ЮKassa недоступна?</summary>
+          <p>Можно оформить заявку через «Ручную выдачу» — мы свяжемся и подскажем альтернативный способ перевода.</p>
+        </details>
+        <details>
+          <summary>Можно поменять тариф?</summary>
+          <p>Да. При покупке нового плана текущий автоматически отзовётся, активной останется одна подписка. Свяжитесь с поддержкой по возврату оставшегося срока старого тарифа.</p>
+        </details>
+        <details>
+          <summary>Где посмотреть свою подписку?</summary>
+          <p>В <a href="/cabinet.html">личном кабинете</a> на вкладке «Профиль» сверху отображается карточка активной подписки.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- Модалка покупки -->
+  <div class="modal-backdrop" id="buy-modal" style="display:none">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="buy-modal-title">Оформление подписки</div>
+        <button class="modal-close" id="buy-modal-close">×</button>
+      </div>
+      <div class="modal-body">
+        <div id="buy-modal-plan" class="buy-plan-summary"></div>
+        <div class="input-group">
+          <label class="input-label">Способ оплаты</label>
+          <div id="buy-modal-providers" class="buy-providers-list">
+            <div class="text-sm text-muted">Загрузка…</div>
+          </div>
+        </div>
+        <div class="form-error" id="buy-modal-error" style="display:none;color:var(--danger);padding:10px;background:rgba(239,68,68,0.1);border-radius:6px;margin-bottom:12px;font-size:13px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="buy-modal-cancel">Отмена</button>
+        <button class="btn btn-primary" id="buy-modal-confirm">Оплатить</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/pricing.js"></script>
+</body>
+</html>

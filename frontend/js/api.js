@@ -180,6 +180,25 @@
       updateGrant: (id, data) => request('PUT', '/subscriptions/grants/' + id, data),
       revoke: (id) => request('DELETE', '/subscriptions/grants/' + id),
     },
+
+    payments: {
+      // Public
+      publicPlans: () => request('GET', '/subscriptions/plans/public'),
+      // User
+      myProviders: () => request('GET', '/payments/providers'),
+      create: (data) => request('POST', '/payments/create', data),
+      mine: () => request('GET', '/payments/mine'),
+      // Admin
+      listAll: (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return request('GET', '/payments/all' + (qs ? '?' + qs : ''));
+      },
+      mark: (id, status) => request('PUT', '/payments/' + id + '/mark', { status }),
+      listProviders: () => request('GET', '/payments/providers/all'),
+      createProvider: (data) => request('POST', '/payments/providers', data),
+      updateProvider: (id, data) => request('PUT', '/payments/providers/' + id, data),
+      deleteProvider: (id) => request('DELETE', '/payments/providers/' + id),
+    },
   };
 
   // Toast helper

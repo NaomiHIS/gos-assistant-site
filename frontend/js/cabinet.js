@@ -502,7 +502,7 @@
         el.innerHTML = `
           <div class="sub-empty">
             У вас пока нет активной подписки.<br>
-            <span class="text-xs">Если вы оплатили — напишите в поддержку, мы выдадим подписку вручную.</span>
+            <span class="text-xs">Посмотрите <a href="/pricing.html">тарифы и оформите подписку</a>, или напишите в поддержку.</span>
           </div>
         `;
         return;
