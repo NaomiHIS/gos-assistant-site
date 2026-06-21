@@ -14,6 +14,7 @@ const KNOWN_FEATURES = [
   { key: 'no_ads',           label: 'Без рекламы' },
   { key: 'export_data',      label: 'Экспорт заметок и истории' },
   { key: 'custom_hotkeys',   label: 'Расширенная настройка горячих клавиш' },
+  { key: 'ai_assistant',     label: 'AI-ассистент по законам и правилам' },
 ];
 
 const DURATIONS = { 7: 7, 14: 14, 30: 30 };

@@ -124,7 +124,7 @@ async function runMigrations() {
        VALUES ('premium', 'Premium',
                'Расширенный доступ к функциям приложения и сайта',
                '#DF005B',
-               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data'),
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant'),
                10)`
     );
     console.log('[InitDB] ✓ subscription tables ensured');
