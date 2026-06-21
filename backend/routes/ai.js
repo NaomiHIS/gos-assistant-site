@@ -40,6 +40,129 @@ const ROLE_LABEL = {
   civilian: 'Гражданский',
 };
 
+// ============================================================
+// RAG: ищем релевантные статьи в БД по тексту последнего сообщения
+// ============================================================
+const ARTICLE_CATS = ['УК', 'АК', 'ДК', 'ПК', 'УАК'];
+const MAX_ARTICLE_TEXT = 240; // символов на статью в prompt
+const MAX_ARTICLES_INJECT = 10;
+
+function sanitizeQuery(s) {
+  return String(s || '')
+    .slice(0, 500)
+    .replace(/[+\-<>~()*"@]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function findRelevantArticles(serverId, query) {
+  if (!serverId) return [];
+  const q = sanitizeQuery(query);
+  if (q.length < 3) return [];
+
+  // 1. FULLTEXT (idx_fulltext on articles(title, text))
+  try {
+    const rows = await db.query(
+      `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+              c.short_name AS catShort, c.name AS catName,
+              MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE) AS score
+         FROM articles a
+         LEFT JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ?
+          AND a.is_active = 1
+          AND MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE)
+        ORDER BY score DESC
+        LIMIT ?`,
+      [q, serverId, q, MAX_ARTICLES_INJECT]
+    );
+    if (rows && rows.length) return rows;
+  } catch (err) {
+    console.warn('[AI] FULLTEXT search failed, falling back to LIKE:', err.message);
+  }
+
+  // 2. Fallback: LIKE по топ-5 ключевым словам
+  const keywords = q.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
+  if (!keywords.length) return [];
+  const conds = keywords.map(() => '(a.title LIKE ? OR a.text LIKE ?)').join(' OR ');
+  const params = [serverId];
+  keywords.forEach((k) => params.push('%' + k + '%', '%' + k + '%'));
+  params.push(MAX_ARTICLES_INJECT);
+  try {
+    return await db.query(
+      `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+              c.short_name AS catShort, c.name AS catName
+         FROM articles a
+         LEFT JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ? AND a.is_active = 1 AND (${conds})
+        LIMIT ?`,
+      params
+    );
+  } catch (err) {
+    console.warn('[AI] LIKE search failed:', err.message);
+    return [];
+  }
+}
+
+function formatArticlesBlock(articles) {
+  if (!articles || !articles.length) return '';
+  const lines = ['', '=== Релевантные статьи сервера ===',
+    'Используй ИМЕННО эти статьи для квалификации. Не выдумывай номера. Если ни одна не подходит — скажи что точной статьи в БД не нашлось.'];
+  for (const a of articles) {
+    const code = (a.catShort ? a.catShort + ' ст. ' : '') + a.code;
+    const stars = a.wantedStars > 0 ? `${a.wantedStars}★` : '';
+    const meta = [a.penalty, stars].filter(Boolean).join(', ');
+    const text = String(a.text || '').replace(/\s+/g, ' ').slice(0, MAX_ARTICLE_TEXT);
+    lines.push(`[${code}] ${a.title || ''}${meta ? '  (' + meta + ')' : ''}`);
+    if (text) lines.push('  ' + text + (a.text && a.text.length > MAX_ARTICLE_TEXT ? '…' : ''));
+  }
+  return lines.join('\n');
+}
+
+// ============================================================
+// Пост-валидация: парсим ссылки на статьи в ответе AI и сверяем с БД
+// ============================================================
+function normalizeRef(cat, num) {
+  // УАК → УК для сравнения (по существующей конвенции)
+  let c = String(cat).toUpperCase();
+  if (c === 'УАК') c = 'УК';
+  return c + ':' + String(num).trim();
+}
+
+function extractArticleRefs(text) {
+  if (!text) return [];
+  const cats = ARTICLE_CATS.join('|');
+  // Варианты: "УК ст. 1.1", "УК 1.1", "ст. 1.1 УК", "статья 1.1 УК"
+  const re = new RegExp(
+    `(?:(${cats})\\s*(?:ст(?:атья|\\.|\\b)\\.?\\s*)?(\\d+(?:\\.\\d+)?))|(?:ст(?:атья|\\.|\\b)\\.?\\s*(\\d+(?:\\.\\d+)?)\\s*(${cats}))`,
+    'gi'
+  );
+  const refs = [];
+  let m;
+  while ((m = re.exec(text))) {
+    const cat = (m[1] || m[4] || '').toUpperCase();
+    const num = m[2] || m[3];
+    if (cat && num) refs.push({ cat, num, raw: m[0].trim(), key: normalizeRef(cat, num) });
+  }
+  return refs;
+}
+
+async function getValidArticleKeys(serverId) {
+  if (!serverId) return null;
+  try {
+    const rows = await db.query(
+      `SELECT a.code, c.short_name AS catShort
+         FROM articles a
+         JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ? AND a.is_active = 1 AND c.short_name IS NOT NULL`,
+      [serverId]
+    );
+    return new Set(rows.map((r) => normalizeRef(r.catShort, r.code)));
+  } catch (err) {
+    console.warn('[AI] getValidArticleKeys failed:', err.message);
+    return null;
+  }
+}
+
 async function buildServerContext(serverId) {
   if (!serverId) return null;
   try {
@@ -195,7 +318,17 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
   }
 
   const context = await buildServerContext(serverId);
-  const systemMsg = { role: 'system', content: buildSystemPrompt(persona, context) };
+
+  // RAG: тянем статьи под последний пользовательский вопрос
+  const lastUser = [...cleaned].reverse().find((m) => m.role === 'user');
+  const relevant = lastUser ? await findRelevantArticles(serverId, lastUser.content) : [];
+  const articlesBlock = formatArticlesBlock(relevant);
+
+  const baseSystem = buildSystemPrompt(persona, context);
+  const systemMsg = {
+    role: 'system',
+    content: articlesBlock ? baseSystem + '\n' + articlesBlock : baseSystem,
+  };
 
   const url = AI_BASE_URL + '/chat/completions';
   const payload = {
@@ -231,6 +364,22 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
       return res.status(502).json({ error: 'AI вернул пустой ответ', raw: data });
     }
 
+    // Пост-валидация: ищем в ответе ссылки на статьи и сверяем с БД
+    let invalidRefs = [];
+    if (serverId) {
+      const validKeys = await getValidArticleKeys(serverId);
+      if (validKeys && validKeys.size) {
+        const refs = extractArticleRefs(reply);
+        const seen = new Set();
+        for (const r of refs) {
+          if (!validKeys.has(r.key) && !seen.has(r.key)) {
+            seen.add(r.key);
+            invalidRefs.push(r.raw);
+          }
+        }
+      }
+    }
+
     res.json({
       success: true,
       reply,
@@ -239,6 +388,11 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
       persona: persona || 'civilian',
       serverId: context ? context.server.id : null,
       serverName: context ? context.server.name : null,
+      usedArticles: relevant.map((a) => ({
+        code: (a.catShort ? a.catShort + ' ' : '') + a.code,
+        title: a.title,
+      })),
+      invalidRefs,
     });
   } catch (err) {
     console.error('[AI] fetch error:', err);
