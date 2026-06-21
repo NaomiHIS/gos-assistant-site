@@ -1147,47 +1147,8 @@ img { max-width: 100%; display: block; }
 .pricing-faq a { color: var(--accent-primary); }
 
 /* ============================================================
-   Buy modal
+   Buy modal — внутренние классы. Использует общий .modal-backdrop/.modal/.modal-header
    ============================================================ */
-.modal-backdrop {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,0.65);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
-  padding: 20px;
-}
-.modal {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-  width: 100%; max-width: 480px;
-  display: flex; flex-direction: column;
-  max-height: 90vh;
-  overflow: hidden;
-}
-.modal-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 22px;
-  border-bottom: 1px solid var(--border-color);
-}
-.modal-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-.modal-close {
-  background: none; border: none; color: var(--text-muted);
-  font-size: 26px; cursor: pointer; line-height: 1;
-  padding: 0; width: 30px; height: 30px;
-}
-.modal-close:hover { color: var(--text-primary); }
-.modal-body {
-  padding: 18px 22px;
-  overflow-y: auto;
-  flex: 1;
-}
-.modal-footer {
-  display: flex; gap: 10px; justify-content: flex-end;
-  padding: 14px 22px;
-  border-top: 1px solid var(--border-color);
-}
-
 .buy-plan-summary { margin-bottom: 18px; }
 .buy-plan-row {
   display: flex; align-items: center; gap: 14px;

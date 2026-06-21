@@ -126,7 +126,7 @@
       </div>
     `;
     $('buy-modal-error').style.display = 'none';
-    $('buy-modal').style.display = 'flex';
+    $('buy-modal').classList.add('open');
     await loadProvidersInModal();
   }
 
@@ -162,7 +162,7 @@
   }
 
   function closeBuyModal() {
-    $('buy-modal').style.display = 'none';
+    $('buy-modal').classList.remove('open');
     State.selectedPlan = null;
     State.selectedProvider = null;
   }
