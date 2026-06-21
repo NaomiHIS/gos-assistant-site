@@ -89,6 +89,47 @@ async function runMigrations() {
       ) ENGINE=InnoDB
     `);
     await db.query(`
+      CREATE TABLE IF NOT EXISTS subscription_plans (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        slug VARCHAR(64) NOT NULL UNIQUE,
+        name VARCHAR(128) NOT NULL,
+        description TEXT NULL,
+        color VARCHAR(16) NULL DEFAULT '#DF005B',
+        features JSON NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_subscriptions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        plan_id INT NOT NULL,
+        starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        expires_at TIMESTAMP NOT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        granted_by INT NULL,
+        revoked_at TIMESTAMP NULL,
+        notes VARCHAR(255) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user_active (user_id, is_active, expires_at),
+        INDEX idx_expires (expires_at, is_active)
+      ) ENGINE=InnoDB
+    `);
+    // Default Premium plan with sensible feature set
+    await db.query(
+      `INSERT IGNORE INTO subscription_plans (slug, name, description, color, features, sort_order)
+       VALUES ('premium', 'Premium',
+               'Расширенный доступ к функциям приложения и сайта',
+               '#DF005B',
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data'),
+               10)`
+    );
+    console.log('[InitDB] ✓ subscription tables ensured');
+
+    await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
         ticket_id INT NOT NULL,

@@ -42,6 +42,7 @@
     setupSupport();
     await loadData();
     refreshSupportBadge();
+    loadSubscription();
     handleDiscordReturnParams();
   }
 
@@ -482,6 +483,67 @@
     const escaped = escapeHtml(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp('(' + escaped + ')', 'gi');
     return safe.replace(re, '<mark style="background:var(--accent-soft);color:var(--accent-primary);padding:1px 3px;border-radius:3px">$1</mark>');
+  }
+
+  // ============================================================
+  // Subscription
+  // ============================================================
+  async function loadSubscription() {
+    const el = $('subscription-content');
+    if (!el) return;
+    try {
+      const [meRes, featRes] = await Promise.all([
+        window.GosClient.subscriptions.me(),
+        window.GosClient.subscriptions.features(),
+      ]);
+      const sub = meRes.subscription;
+      const featuresMeta = featRes.features || [];
+      if (!sub) {
+        el.innerHTML = `
+          <div class="sub-empty">
+            У вас пока нет активной подписки.<br>
+            <span class="text-xs">Если вы оплатили — напишите в поддержку, мы выдадим подписку вручную.</span>
+          </div>
+        `;
+        return;
+      }
+      const expiresAt = new Date(sub.expiresAt);
+      const expStr = expiresAt.toLocaleString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const remaining = sub.remainingDays;
+      let remainingClass = '';
+      if (remaining <= 0) remainingClass = 'sub-expired-warn';
+      else if (remaining <= 3) remainingClass = 'sub-expiring-soon';
+      const featsHtml = (sub.plan.features || []).map((key) => {
+        const meta = featuresMeta.find((f) => f.key === key);
+        return `<div class="sub-feature">✓ ${escapeHtml(meta ? meta.label : key)}</div>`;
+      }).join('');
+      el.innerHTML = `
+        <div class="subscription-active">
+          <div class="sub-badge" style="background:linear-gradient(135deg, ${escapeHtml(sub.plan.color || '#DF005B')}, rgba(0,0,0,0.4))">
+            ${escapeHtml(sub.plan.name)}
+          </div>
+          <div class="sub-info">
+            ${sub.plan.description ? `<div class="sub-desc">${escapeHtml(sub.plan.description)}</div>` : ''}
+            <div class="sub-meta">
+              <div>Истекает: <strong>${escapeHtml(expStr)}</strong></div>
+              <div class="${remainingClass}">Осталось: <strong>${remaining} ${dayWord(remaining)}</strong></div>
+            </div>
+            ${featsHtml ? `<div class="sub-features-title">Доступные функции</div><div class="sub-features-list">${featsHtml}</div>` : ''}
+          </div>
+        </div>
+      `;
+    } catch (err) {
+      el.innerHTML = `<div class="text-sm text-muted">Не удалось загрузить: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function dayWord(n) {
+    const a = Math.abs(n) % 100;
+    const b = a % 10;
+    if (a > 10 && a < 20) return 'дней';
+    if (b > 1 && b < 5) return 'дня';
+    if (b === 1) return 'день';
+    return 'дней';
   }
 
   // ============================================================

@@ -52,6 +52,18 @@
 
     <!-- PROFILE -->
     <div class="cabinet-panel active" data-panel="profile">
+      <div class="cabinet-card" id="subscription-card" style="margin-bottom:20px">
+        <div class="cabinet-card-header">
+          <div class="cabinet-card-title">Подписка</div>
+          <div class="cabinet-card-desc">Текущий тариф и доступные функции</div>
+        </div>
+        <div class="cabinet-card-body">
+          <div id="subscription-content">
+            <div class="text-sm text-muted">Загрузка...</div>
+          </div>
+        </div>
+      </div>
+
       <div class="cabinet-card">
         <div class="cabinet-card-header">
           <div class="cabinet-card-title">Личные данные</div>
@@ -444,6 +456,45 @@
       font-size: 11px; color: var(--text-muted); margin-top: 4px;
     }
     .ticket-message.user .ticket-message-meta { text-align: right; }
+
+    .subscription-active {
+      display: flex; gap: 16px; align-items: flex-start;
+    }
+    .sub-badge {
+      flex-shrink: 0;
+      padding: 10px 16px;
+      border-radius: var(--radius-md);
+      background: linear-gradient(135deg, var(--accent-primary), #5B0029);
+      color: white;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      box-shadow: 0 4px 20px rgba(223,0,91,0.25);
+    }
+    .sub-info { flex: 1; min-width: 0; }
+    .sub-name { font-size: 18px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; }
+    .sub-desc { font-size: 13px; color: var(--text-secondary); margin-bottom: 10px; }
+    .sub-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; }
+    .sub-meta strong { color: var(--text-primary); }
+    .sub-features-title {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--text-muted); font-weight: 600; margin-bottom: 8px;
+    }
+    .sub-features-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px; }
+    .sub-feature {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 10px;
+      background: var(--accent-soft);
+      color: var(--accent-primary);
+      border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500;
+    }
+    .sub-empty {
+      padding: 20px; text-align: center; color: var(--text-muted);
+      background: var(--bg-tertiary); border-radius: var(--radius-md);
+    }
+    .sub-expiring-soon { color: var(--warning, #F59E0B); }
+    .sub-expired-warn { color: var(--danger); }
 
     .cabinet-panel { display: none; }
     .cabinet-panel.active { display: block; animation: fadeIn 0.2s; }

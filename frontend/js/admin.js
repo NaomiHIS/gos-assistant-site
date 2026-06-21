@@ -85,6 +85,7 @@
     if (name === 'devlog') initDevlogView();
     if (name === 'maintenance') initMaintenanceView();
     if (name === 'support') initSupportView();
+    if (name === 'subscriptions') initSubscriptionsView();
   }
 
   // ============================================================
@@ -1807,6 +1808,388 @@
   }
   setInterval(refreshAdminSupportBadge, 60000);
   setTimeout(refreshAdminSupportBadge, 2000);
+
+  // ============================================================
+  // Subscriptions view
+  // ============================================================
+  const SubsState = {
+    initialized: false,
+    plans: [],
+    grants: [],
+    features: [],
+    editingPlan: null,
+    selectedUser: null,
+    selectedDays: 14,
+  };
+
+  function initSubscriptionsView() {
+    loadSubsAll();
+    if (SubsState.initialized) return;
+    SubsState.initialized = true;
+
+    $('btn-new-plan').addEventListener('click', () => openPlanModal(null));
+    $('btn-save-plan').addEventListener('click', savePlan);
+    $('btn-delete-plan').addEventListener('click', deletePlan);
+    $('btn-add-custom-feature').addEventListener('click', addCustomFeature);
+
+    $('btn-grant-subscription').addEventListener('click', doGrantSubscription);
+    document.querySelectorAll('.duration-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.duration-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        SubsState.selectedDays = parseInt(btn.dataset.days, 10);
+      });
+    });
+
+    let userSearchTimer = null;
+    $('grant-user-search').addEventListener('input', (e) => {
+      clearTimeout(userSearchTimer);
+      const q = e.target.value.trim();
+      if (!q) { hideUserResults(); return; }
+      userSearchTimer = setTimeout(() => searchUsersForGrant(q), 250);
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#grant-user-search') && !e.target.closest('#grant-user-results')) {
+        hideUserResults();
+      }
+    });
+
+    $('btn-refresh-grants').addEventListener('click', loadGrants);
+    $('grants-filter').addEventListener('change', loadGrants);
+    let grantsSearchTimer = null;
+    $('grants-search').addEventListener('input', () => {
+      clearTimeout(grantsSearchTimer);
+      grantsSearchTimer = setTimeout(loadGrants, 300);
+    });
+  }
+
+  async function loadSubsAll() {
+    try {
+      const [features, plans] = await Promise.all([
+        window.GosClient.subscriptions.features(),
+        window.GosClient.subscriptions.listPlans(),
+      ]);
+      SubsState.features = features.features || [];
+      SubsState.plans = plans.plans || [];
+      renderPlans();
+      populateGrantPlanSelect();
+      await loadGrants();
+    } catch (err) {
+      toast('Не удалось загрузить: ' + err.message);
+    }
+  }
+
+  function renderPlans() {
+    const el = $('plans-list');
+    if (SubsState.plans.length === 0) {
+      el.innerHTML = '<div class="text-sm text-muted">Планов пока нет. Создайте первый.</div>';
+      return;
+    }
+    el.innerHTML = SubsState.plans.map((p) => {
+      const feats = (p.features || []).slice(0, 6).map((f) => {
+        const meta = SubsState.features.find((x) => x.key === f);
+        return `<span class="plan-feature-chip">${escapeHtml(meta ? meta.label : f)}</span>`;
+      }).join('');
+      const more = (p.features || []).length > 6 ? `<span class="plan-feature-chip">+${(p.features || []).length - 6}</span>` : '';
+      return `
+        <div class="plan-card ${p.isActive ? '' : 'inactive'}" data-id="${p.id}" style="border-left-color:${escapeHtml(p.color || '#DF005B')}">
+          <div class="plan-card-name">${escapeHtml(p.name)}</div>
+          <div class="plan-card-slug">${escapeHtml(p.slug)}</div>
+          ${p.description ? `<div class="plan-card-desc">${escapeHtml(p.description)}</div>` : ''}
+          <div class="plan-card-features">${feats}${more}</div>
+          <div class="plan-card-meta">
+            <span class="${p.isActive ? 'plan-card-status-active' : 'plan-card-status-inactive'}">
+              ${p.isActive ? '● Активен' : '○ Выключен'}
+            </span>
+            <span>Функций: ${(p.features || []).length}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+    el.querySelectorAll('.plan-card').forEach((card) => {
+      card.addEventListener('click', () => {
+        const id = parseInt(card.dataset.id, 10);
+        const plan = SubsState.plans.find((p) => p.id === id);
+        if (plan) openPlanModal(plan);
+      });
+    });
+  }
+
+  function populateGrantPlanSelect() {
+    const sel = $('grant-plan');
+    sel.innerHTML = SubsState.plans
+      .filter((p) => p.isActive)
+      .map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`)
+      .join('');
+  }
+
+  function openPlanModal(plan) {
+    SubsState.editingPlan = plan;
+    $('modal-plan-title').textContent = plan ? 'Редактировать план' : 'Новый план';
+    $('plan-slug').value = plan ? plan.slug : '';
+    $('plan-slug').disabled = !!plan;
+    $('plan-name').value = plan ? plan.name : '';
+    $('plan-description').value = plan ? (plan.description || '') : '';
+    $('plan-color').value = plan ? (plan.color || '#DF005B') : '#DF005B';
+    $('plan-sort').value = plan ? (plan.sortOrder || 0) : 0;
+    $('plan-active').checked = plan ? !!plan.isActive : true;
+    $('btn-delete-plan').style.display = plan ? '' : 'none';
+    renderFeaturesList(plan ? (plan.features || []) : []);
+    document.getElementById('modal-plan').classList.add('open');
+  }
+
+  function renderFeaturesList(selectedFeatures) {
+    const list = $('plan-features-list');
+    const known = SubsState.features.map((f) => f.key);
+    const allKeys = Array.from(new Set([...known, ...selectedFeatures]));
+    list.innerHTML = allKeys.map((key) => {
+      const meta = SubsState.features.find((f) => f.key === key);
+      const label = meta ? meta.label : key;
+      const isCustom = !meta;
+      const checked = selectedFeatures.includes(key);
+      return `
+        <label class="feature-item">
+          <input type="checkbox" data-key="${escapeHtml(key)}" ${checked ? 'checked' : ''} />
+          <span class="feature-item-label">${escapeHtml(label)}</span>
+          <span class="feature-item-key">${escapeHtml(key)}</span>
+          ${isCustom ? `<span class="feature-item-remove" data-remove="${escapeHtml(key)}" title="Удалить">×</span>` : ''}
+        </label>
+      `;
+    }).join('');
+    list.querySelectorAll('[data-remove]').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = el.dataset.remove;
+        const checks = collectSelectedFeatures().filter((f) => f !== key);
+        renderFeaturesList(checks);
+      });
+    });
+  }
+
+  function collectSelectedFeatures() {
+    return Array.from($('plan-features-list').querySelectorAll('input[type="checkbox"]'))
+      .filter((c) => c.checked)
+      .map((c) => c.dataset.key);
+  }
+
+  function addCustomFeature() {
+    const input = $('plan-feature-custom');
+    const key = input.value.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+    if (!key) return;
+    const current = collectSelectedFeatures();
+    if (!current.includes(key)) current.push(key);
+    renderFeaturesList(current);
+    input.value = '';
+  }
+
+  async function savePlan() {
+    const slug = $('plan-slug').value.trim();
+    const name = $('plan-name').value.trim();
+    if (!slug || !name) { toast('Укажите slug и название'); return; }
+    const payload = {
+      slug,
+      name,
+      description: $('plan-description').value.trim() || null,
+      color: $('plan-color').value,
+      sortOrder: parseInt($('plan-sort').value, 10) || 0,
+      isActive: $('plan-active').checked,
+      features: collectSelectedFeatures(),
+    };
+    const btn = $('btn-save-plan');
+    btn.disabled = true;
+    try {
+      if (SubsState.editingPlan) {
+        await window.GosClient.subscriptions.updatePlan(SubsState.editingPlan.id, payload);
+      } else {
+        await window.GosClient.subscriptions.createPlan(payload);
+      }
+      document.getElementById('modal-plan').classList.remove('open');
+      await loadSubsAll();
+      toast('Сохранено');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deletePlan() {
+    if (!SubsState.editingPlan) return;
+    if (!confirm('Удалить план «' + SubsState.editingPlan.name + '»?')) return;
+    try {
+      await window.GosClient.subscriptions.deletePlan(SubsState.editingPlan.id);
+      document.getElementById('modal-plan').classList.remove('open');
+      await loadSubsAll();
+      toast('План удалён');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    }
+  }
+
+  async function searchUsersForGrant(q) {
+    try {
+      const data = await window.GosClient.users.list();
+      const users = (data.users || []).filter((u) => {
+        const hay = ((u.email || '') + ' ' + (u.username || '')).toLowerCase();
+        return hay.includes(q.toLowerCase());
+      }).slice(0, 8);
+      const el = $('grant-user-results');
+      if (users.length === 0) {
+        el.innerHTML = '<div class="user-search-item text-muted">Не найдено</div>';
+        el.style.display = 'block';
+        return;
+      }
+      el.innerHTML = users.map((u) => `
+        <div class="user-search-item" data-id="${u.id}" data-name="${escapeHtml(u.username || u.email)}" data-email="${escapeHtml(u.email)}">
+          <div>${escapeHtml(u.username || '—')}</div>
+          <div class="user-search-item-email">${escapeHtml(u.email)}</div>
+        </div>
+      `).join('');
+      el.style.display = 'block';
+      el.querySelectorAll('.user-search-item[data-id]').forEach((item) => {
+        item.addEventListener('click', () => {
+          SubsState.selectedUser = {
+            id: parseInt(item.dataset.id, 10),
+            name: item.dataset.name,
+            email: item.dataset.email,
+          };
+          $('grant-user-search').value = item.dataset.email;
+          $('grant-user-selected').textContent = `Выбрано: ${item.dataset.name} (${item.dataset.email})`;
+          $('grant-user-selected').style.display = '';
+          hideUserResults();
+        });
+      });
+    } catch (err) {
+      console.warn('user search failed', err);
+    }
+  }
+
+  function hideUserResults() {
+    $('grant-user-results').style.display = 'none';
+  }
+
+  async function doGrantSubscription() {
+    if (!SubsState.selectedUser) { toast('Выберите пользователя'); return; }
+    const planId = parseInt($('grant-plan').value, 10);
+    if (!planId) { toast('Выберите план'); return; }
+    const days = SubsState.selectedDays;
+    const notes = $('grant-notes').value.trim() || null;
+    const btn = $('btn-grant-subscription');
+    btn.disabled = true;
+    $('grant-status').textContent = 'Выдаём...';
+    try {
+      const data = await window.GosClient.subscriptions.grant({
+        userId: SubsState.selectedUser.id,
+        planId,
+        durationDays: days,
+        notes,
+      });
+      $('grant-status').textContent = `✓ Подписка выдана до ${new Date(data.subscription.expiresAt).toLocaleString('ru-RU')}`;
+      toast(`Подписка выдана: ${SubsState.selectedUser.email}`);
+      $('grant-notes').value = '';
+      await loadGrants();
+    } catch (err) {
+      $('grant-status').textContent = '✗ ' + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function loadGrants() {
+    const tbody = $('grants-table');
+    tbody.innerHTML = '<tr><td colspan="6" class="text-sm text-muted" style="padding:24px;text-align:center">Загрузка...</td></tr>';
+    const params = {};
+    const active = $('grants-filter').value;
+    const search = $('grants-search').value.trim();
+    if (active !== '') params.active = active;
+    if (search) params.search = search;
+    try {
+      const data = await window.GosClient.subscriptions.listGrants(params);
+      SubsState.grants = data.grants || [];
+      renderGrants();
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-sm text-muted" style="padding:24px;text-align:center">Ошибка: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderGrants() {
+    const tbody = $('grants-table');
+    if (SubsState.grants.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-sm text-muted" style="padding:24px;text-align:center">Нет выданных подписок</td></tr>';
+      return;
+    }
+    const now = Date.now();
+    tbody.innerHTML = SubsState.grants.map((g) => {
+      const expMs = new Date(g.expiresAt).getTime();
+      const expired = expMs <= now;
+      let status, statusClass;
+      if (g.revokedAt && !g.isActive) { status = 'Отозвана'; statusClass = 'sub-status-revoked'; }
+      else if (!g.isActive || expired) { status = 'Истекла'; statusClass = 'sub-status-expired'; }
+      else { status = 'Активна'; statusClass = 'sub-status-active'; }
+      const expStr = new Date(g.expiresAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const remainingDays = Math.max(0, Math.ceil((expMs - now) / (24 * 60 * 60 * 1000)));
+      return `
+        <tr>
+          <td><span style="font-family:monospace">#${g.id}</span></td>
+          <td>
+            <div style="font-size:13px">${escapeHtml(g.userName || '—')}</div>
+            <div class="text-xs text-muted">${escapeHtml(g.userEmail)}</div>
+          </td>
+          <td><span style="font-weight:600;color:${escapeHtml(g.planColor || 'var(--accent-primary)')}">${escapeHtml(g.planName)}</span></td>
+          <td>
+            <div style="font-size:12px">${escapeHtml(expStr)}</div>
+            ${!expired && g.isActive ? `<div class="text-xs text-muted">осталось ${remainingDays} дн.</div>` : ''}
+          </td>
+          <td><span class="ticket-row-status ${statusClass}">${status}</span></td>
+          <td>
+            <div class="flex gap-1" style="flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" data-extend="${g.id}" data-days="7">+7д</button>
+              <button class="btn btn-secondary btn-sm" data-extend="${g.id}" data-days="14">+14д</button>
+              <button class="btn btn-secondary btn-sm" data-extend="${g.id}" data-days="30">+30д</button>
+              ${g.isActive ? `<button class="btn btn-danger btn-sm" data-revoke="${g.id}">Отозвать</button>` : `<button class="btn btn-secondary btn-sm" data-reactivate="${g.id}">Включить</button>`}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    tbody.querySelectorAll('[data-extend]').forEach((btn) => {
+      btn.addEventListener('click', () => extendGrant(parseInt(btn.dataset.extend, 10), parseInt(btn.dataset.days, 10)));
+    });
+    tbody.querySelectorAll('[data-revoke]').forEach((btn) => {
+      btn.addEventListener('click', () => revokeGrant(parseInt(btn.dataset.revoke, 10)));
+    });
+    tbody.querySelectorAll('[data-reactivate]').forEach((btn) => {
+      btn.addEventListener('click', () => reactivateGrant(parseInt(btn.dataset.reactivate, 10)));
+    });
+  }
+
+  async function extendGrant(id, days) {
+    try {
+      await window.GosClient.subscriptions.extend(id, days);
+      toast(`+${days} дн. добавлено`);
+      await loadGrants();
+    } catch (err) { toast('Ошибка: ' + err.message); }
+  }
+
+  async function revokeGrant(id) {
+    if (!confirm('Отозвать подписку?')) return;
+    try {
+      await window.GosClient.subscriptions.revoke(id);
+      toast('Подписка отозвана');
+      await loadGrants();
+    } catch (err) { toast('Ошибка: ' + err.message); }
+  }
+
+  async function reactivateGrant(id) {
+    try {
+      // Re-activate with +7 days from now as a safe default
+      const future = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+      await window.GosClient.subscriptions.updateGrant(id, { isActive: true, expiresAt: future });
+      toast('Подписка активирована на 7 дн.');
+      await loadGrants();
+    } catch (err) { toast('Ошибка: ' + err.message); }
+  }
 
   // Periodic refresh of the nav dot — keeps admins aware
   async function pollMaintenanceStatus() {

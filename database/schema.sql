@@ -156,6 +156,43 @@ CREATE TABLE IF NOT EXISTS donate_links (
 ) ENGINE=InnoDB;
 
 -- ============================================================
+-- Subscription plans: admin-editable tiers with feature flags
+-- ============================================================
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  slug VARCHAR(64) NOT NULL UNIQUE,
+  name VARCHAR(128) NOT NULL,
+  description TEXT NULL,
+  color VARCHAR(16) NULL DEFAULT '#DF005B',
+  features JSON NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- ============================================================
+-- User subscriptions: granted access with expiry
+-- ============================================================
+CREATE TABLE IF NOT EXISTS user_subscriptions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  plan_id INT NOT NULL,
+  starts_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  granted_by INT NULL,
+  revoked_at TIMESTAMP NULL,
+  notes VARCHAR(255) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE RESTRICT,
+  FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+  INDEX idx_user_active (user_id, is_active, expires_at),
+  INDEX idx_expires (expires_at, is_active)
+) ENGINE=InnoDB;
+
+-- ============================================================
 -- Support tickets: user-submitted questions/suggestions/bug reports
 -- ============================================================
 CREATE TABLE IF NOT EXISTS support_tickets (

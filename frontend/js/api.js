@@ -163,6 +163,23 @@
       setStatus: (id, status) => request('PUT', '/support/tickets/' + id + '/status', { status }),
       unreadCount: () => request('GET', '/support/unread-count'),
     },
+
+    subscriptions: {
+      features: () => request('GET', '/subscriptions/features'),
+      me: () => request('GET', '/subscriptions/me'),
+      listPlans: () => request('GET', '/subscriptions/plans'),
+      createPlan: (data) => request('POST', '/subscriptions/plans', data),
+      updatePlan: (id, data) => request('PUT', '/subscriptions/plans/' + id, data),
+      deletePlan: (id) => request('DELETE', '/subscriptions/plans/' + id),
+      listGrants: (params) => {
+        const qs = new URLSearchParams(params || {}).toString();
+        return request('GET', '/subscriptions/grants' + (qs ? '?' + qs : ''));
+      },
+      grant: (data) => request('POST', '/subscriptions/grants', data),
+      extend: (id, days) => request('POST', '/subscriptions/grants/' + id + '/extend', { days }),
+      updateGrant: (id, data) => request('PUT', '/subscriptions/grants/' + id, data),
+      revoke: (id) => request('DELETE', '/subscriptions/grants/' + id),
+    },
   };
 
   // Toast helper
