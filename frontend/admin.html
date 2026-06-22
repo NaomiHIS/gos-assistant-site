@@ -72,6 +72,10 @@
           <span>Платежи</span>
           <span id="nav-payments-badge" class="admin-nav-badge" style="display:none">0</span>
         </div>
+        <div class="admin-nav-item" data-view="contacts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>Контакты</span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -875,6 +879,81 @@
               <tbody id="parser-table"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      <!-- CONTACTS -->
+      <div class="view hidden" data-view="contacts">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Контакты</div>
+            <div class="admin-subtitle">Информация о владельце для публичной страницы /contacts.html</div>
+          </div>
+          <div class="flex gap-2">
+            <a class="btn btn-secondary btn-sm" href="/contacts.html" target="_blank">Открыть страницу</a>
+            <button class="btn btn-primary btn-sm" id="btn-save-contacts">Сохранить</button>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px">
+          <div class="section-title">Владелец</div>
+          <div class="grid-2">
+            <div class="input-group">
+              <label class="input-label">Имя / Никнейм</label>
+              <input type="text" class="input" id="ct-owner-name" maxlength="128" />
+            </div>
+            <div class="input-group">
+              <label class="input-label">Роль / Подпись</label>
+              <input type="text" class="input" id="ct-owner-role" maxlength="128" placeholder="Например: Разработчик" />
+            </div>
+          </div>
+          <div class="input-group">
+            <label class="input-label">URL аватара (опц.)</label>
+            <input type="text" class="input" id="ct-avatar-url" maxlength="500" placeholder="https://..." />
+          </div>
+          <div class="input-group">
+            <label class="input-label">О себе / О проекте (опц.)</label>
+            <textarea class="input textarea" id="ct-about" rows="3" maxlength="4000" placeholder="Короткий текст, который увидят посетители"></textarea>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px">
+          <div class="section-title">Социальные сети и контакты</div>
+          <div class="grid-2">
+            <div class="input-group">
+              <label class="input-label">Email</label>
+              <input type="email" class="input" id="ct-email" maxlength="255" placeholder="you@example.com" />
+            </div>
+            <div class="input-group">
+              <label class="input-label">Telegram</label>
+              <input type="text" class="input" id="ct-telegram" maxlength="255" placeholder="@username или https://t.me/..." />
+            </div>
+            <div class="input-group">
+              <label class="input-label">Discord</label>
+              <input type="text" class="input" id="ct-discord" maxlength="255" placeholder="username или ссылка-инвайт" />
+            </div>
+            <div class="input-group">
+              <label class="input-label">VK</label>
+              <input type="text" class="input" id="ct-vk" maxlength="255" placeholder="id или ссылка" />
+            </div>
+            <div class="input-group">
+              <label class="input-label">GitHub</label>
+              <input type="text" class="input" id="ct-github" maxlength="255" placeholder="username" />
+            </div>
+            <div class="input-group">
+              <label class="input-label">Сайт</label>
+              <input type="text" class="input" id="ct-website" maxlength="255" placeholder="example.com" />
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px">
+          <div class="flex items-center justify-between mb-3">
+            <div class="section-title" style="margin:0">Произвольные ссылки</div>
+            <button class="btn btn-secondary btn-sm" id="btn-add-custom-link">+ Добавить</button>
+          </div>
+          <div class="text-xs text-muted mb-3">Можно добавить любые ссылки — Boosty, YouTube, Twitch и т.п. Иконка — эмодзи (опционально).</div>
+          <div id="ct-custom-links" class="admin-custom-links-list"></div>
         </div>
       </div>
     </main>

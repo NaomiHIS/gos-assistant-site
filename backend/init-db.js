@@ -216,6 +216,30 @@ async function runMigrations() {
     );
     console.log('[InitDB] ✓ payment tables ensured');
 
+    // ============================================================
+    // Site contacts (single-row): информация о владельце
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS site_contacts (
+        id TINYINT PRIMARY KEY DEFAULT 1,
+        owner_name VARCHAR(128) NULL,
+        owner_role VARCHAR(128) NULL,
+        about TEXT NULL,
+        avatar_url VARCHAR(500) NULL,
+        email VARCHAR(255) NULL,
+        telegram VARCHAR(255) NULL,
+        discord VARCHAR(255) NULL,
+        vk VARCHAR(255) NULL,
+        github VARCHAR(255) NULL,
+        website VARCHAR(255) NULL,
+        custom_links JSON NULL,
+        updated_by INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    await db.query('INSERT IGNORE INTO site_contacts (id) VALUES (1)');
+    console.log('[InitDB] ✓ site_contacts ensured');
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,

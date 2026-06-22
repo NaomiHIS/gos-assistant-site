@@ -87,6 +87,7 @@
     if (name === 'support') initSupportView();
     if (name === 'subscriptions') initSubscriptionsView();
     if (name === 'payments') initPaymentsView();
+    if (name === 'contacts') initContactsView();
   }
 
   // ============================================================
@@ -2437,6 +2438,115 @@
         }
       });
     });
+  }
+
+  // ============================================================
+  // Contacts (admin)
+  // ============================================================
+  let contactsLoaded = false;
+  const ContactsState = { customLinks: [] };
+
+  async function initContactsView() {
+    if (contactsLoaded) return;
+    contactsLoaded = true;
+    $('btn-save-contacts').addEventListener('click', saveContacts);
+    $('btn-add-custom-link').addEventListener('click', () => addCustomLinkRow({ label: '', url: '', icon: '' }));
+    await loadContacts();
+  }
+
+  async function loadContacts() {
+    try {
+      const res = await fetch('/api/contacts').then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось загрузить контакты');
+      const c = res.contacts || {};
+      $('ct-owner-name').value = c.ownerName || '';
+      $('ct-owner-role').value = c.ownerRole || '';
+      $('ct-about').value = c.about || '';
+      $('ct-avatar-url').value = c.avatarUrl || '';
+      $('ct-email').value = c.email || '';
+      $('ct-telegram').value = c.telegram || '';
+      $('ct-discord').value = c.discord || '';
+      $('ct-vk').value = c.vk || '';
+      $('ct-github').value = c.github || '';
+      $('ct-website').value = c.website || '';
+      ContactsState.customLinks = Array.isArray(c.customLinks) ? c.customLinks.slice() : [];
+      renderCustomLinks();
+    } catch (err) {
+      toast('Ошибка загрузки контактов: ' + err.message);
+    }
+  }
+
+  function renderCustomLinks() {
+    const cont = $('ct-custom-links');
+    if (!ContactsState.customLinks.length) {
+      cont.innerHTML = '<div class="text-xs text-muted">Пока ничего не добавлено.</div>';
+      return;
+    }
+    cont.innerHTML = '';
+    ContactsState.customLinks.forEach((link, idx) => {
+      const row = document.createElement('div');
+      row.className = 'admin-custom-link-row';
+      row.innerHTML = `
+        <input type="text" class="input" placeholder="Название" value="${escapeHtmlA(link.label || '')}" data-field="label" />
+        <input type="text" class="input" placeholder="https://..." value="${escapeHtmlA(link.url || '')}" data-field="url" />
+        <input type="text" class="input" placeholder="🔗" value="${escapeHtmlA(link.icon || '')}" data-field="icon" maxlength="4" />
+        <button class="btn-remove" data-remove>Удалить</button>
+      `;
+      row.querySelectorAll('input').forEach((inp) => {
+        inp.addEventListener('input', () => {
+          ContactsState.customLinks[idx][inp.dataset.field] = inp.value;
+        });
+      });
+      row.querySelector('[data-remove]').addEventListener('click', () => {
+        ContactsState.customLinks.splice(idx, 1);
+        renderCustomLinks();
+      });
+      cont.appendChild(row);
+    });
+  }
+
+  function addCustomLinkRow(initial) {
+    ContactsState.customLinks.push({ label: initial.label || '', url: initial.url || '', icon: initial.icon || '' });
+    renderCustomLinks();
+  }
+
+  function escapeHtmlA(s) {
+    return String(s || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  async function saveContacts() {
+    const btn = $('btn-save-contacts');
+    btn.disabled = true;
+    btn.textContent = 'Сохраняем...';
+    try {
+      const body = {
+        ownerName: $('ct-owner-name').value,
+        ownerRole: $('ct-owner-role').value,
+        about: $('ct-about').value,
+        avatarUrl: $('ct-avatar-url').value,
+        email: $('ct-email').value,
+        telegram: $('ct-telegram').value,
+        discord: $('ct-discord').value,
+        vk: $('ct-vk').value,
+        github: $('ct-github').value,
+        website: $('ct-website').value,
+        customLinks: ContactsState.customLinks.filter((l) => l.url && l.url.trim()),
+      };
+      const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + window.GosClient.getToken() };
+      const res = await fetch('/api/contacts', { method: 'PUT', headers, body: JSON.stringify(body) }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось сохранить');
+      toast('Контакты сохранены');
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Сохранить';
+    }
   }
 
   // Periodic refresh of the nav dot — keeps admins aware

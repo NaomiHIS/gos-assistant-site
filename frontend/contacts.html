@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Контакты — GOS Assistant</title>
+  <meta name="description" content="Контакты владельца проекта GOS Assistant." />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container navbar-inner">
+      <a href="/" class="brand">
+        <div class="brand-icon">GA</div>
+        <span>GOS Assistant</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#features" class="nav-link">Возможности</a>
+        <a href="/pricing.html" class="nav-link">Тарифы</a>
+        <a href="/devlog.html" class="nav-link">DevLog</a>
+        <a href="/contacts.html" class="nav-link active">Контакты</a>
+        <a href="/login.html" class="nav-link" data-auth="guest">Войти</a>
+        <a href="/cabinet.html" class="nav-link hidden" data-auth="user">Личный кабинет</a>
+      </div>
+      <div class="nav-actions">
+        <a href="/login.html" class="btn btn-secondary btn-sm" data-auth="guest">Войти</a>
+        <a href="/login.html?mode=register" class="btn btn-primary btn-sm" data-auth="guest">Регистрация</a>
+        <a href="/cabinet.html" class="btn btn-primary btn-sm hidden" data-auth="user">Личный кабинет</a>
+      </div>
+    </div>
+  </nav>
+
+  <section class="contacts-hero">
+    <div class="container">
+      <h1 class="contacts-title">Контакты</h1>
+      <p class="contacts-subtitle">Связаться с владельцем проекта</p>
+    </div>
+  </section>
+
+  <section class="contacts-section">
+    <div class="container">
+      <div id="contacts-content" class="contacts-content">
+        <div class="text-sm text-muted" style="text-align:center;padding:40px 0">Загружаем…</div>
+      </div>
+    </div>
+  </section>
+
+  <script src="js/api.js"></script>
+  <script src="js/contacts.js"></script>
+</body>
+</html>
