@@ -15,6 +15,7 @@ function userPublic(u) {
     role: u.role,
     avatar: u.avatar_url || null,
     discordId: u.discord_id || null,
+    lockedServerId: u.locked_server_id || null,
   };
 }
 
@@ -114,7 +115,7 @@ async function exchangeCodeForUser(code) {
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, username, password, acceptTerms } = req.body || {};
+    const { email, username, password, acceptTerms, serverId } = req.body || {};
     if (!email || !username || !password) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
@@ -130,6 +131,15 @@ router.post('/register', async (req, res) => {
         error: 'Необходимо принять Условия использования и Политику конфиденциальности',
       });
     }
+    if (!serverId || typeof serverId !== 'string') {
+      return res.status(400).json({ success: false, error: 'Выберите свой сервер' });
+    }
+
+    // Проверяем существование и активность сервера
+    const srv = await db.queryOne('SELECT id FROM servers WHERE id = ? AND is_active = 1', [serverId]);
+    if (!srv) {
+      return res.status(400).json({ success: false, error: 'Сервер не найден' });
+    }
 
     const exists = await db.queryOne('SELECT id FROM users WHERE email = ?', [email]);
     if (exists) {
@@ -138,9 +148,9 @@ router.post('/register', async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
     const result = await db.query(
-      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version)
-       VALUES (?, ?, ?, ?, NOW(), ?)`,
-      [email, username, hash, 'user', TERMS_VERSION]
+      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
+      [email, username, hash, 'user', TERMS_VERSION, serverId]
     );
 
     const user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
@@ -185,7 +195,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   // Re-fetch full row to include created_at, etc.
   const u = await db.queryOne(
-    'SELECT id, email, username, role, avatar_url, discord_id, created_at, last_login FROM users WHERE id = ?',
+    'SELECT id, email, username, role, avatar_url, discord_id, locked_server_id, created_at, last_login FROM users WHERE id = ?',
     [req.user.id]
   );
   if (!u) return res.status(404).json({ success: false, error: 'Not found' });
@@ -212,6 +222,40 @@ router.put('/me', requireAuth, async (req, res) => {
     res.json({ success: true, user: userPublic(u) });
   } catch (err) {
     console.error('Update profile error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// PUT /api/auth/locked-server — закрепить/сменить сервер
+// Требует multi_server feature если меняется на новый
+router.put('/locked-server', requireAuth, async (req, res) => {
+  try {
+    const { serverId } = req.body || {};
+    if (!serverId) return res.status(400).json({ success: false, error: 'serverId обязателен' });
+
+    const srv = await db.queryOne('SELECT id FROM servers WHERE id = ? AND is_active = 1', [serverId]);
+    if (!srv) return res.status(400).json({ success: false, error: 'Сервер не найден' });
+
+    // Если у юзера уже есть закреплённый и он другой — требуем multi_server
+    const u = await db.queryOne('SELECT locked_server_id FROM users WHERE id = ?', [req.user.id]);
+    if (u && u.locked_server_id && u.locked_server_id !== serverId) {
+      const { loadCurrentSubscription } = require('./subscriptions');
+      const sub = await loadCurrentSubscription(req.user.id);
+      const hasMulti = sub && Array.isArray(sub.plan.features) && sub.plan.features.includes('multi_server');
+      if (!hasMulti) {
+        return res.status(403).json({
+          success: false,
+          error: 'Смена закреплённого сервера доступна с подпиской Lite или Premium',
+          code: 'MULTI_SERVER_REQUIRED',
+        });
+      }
+    }
+
+    await db.query('UPDATE users SET locked_server_id = ? WHERE id = ?', [serverId, req.user.id]);
+    const full = await db.queryOne('SELECT * FROM users WHERE id = ?', [req.user.id]);
+    res.json({ success: true, user: userPublic(full) });
+  } catch (err) {
+    console.error('locked-server error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

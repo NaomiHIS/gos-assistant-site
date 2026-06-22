@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
+const { requireAuth, requireRole, optionalAuth, effectiveLockedServer } = require('../middleware/auth');
 
 function mapArticle(row) {
   return {
@@ -16,10 +16,21 @@ function mapArticle(row) {
   };
 }
 
+// Принудительно прижимаем serverId к закреплённому если у юзера нет multi_server.
+// Если запросил чужой сервер — пересиливаем своим (НЕ возвращаем 403, чтобы старые клиенты не падали).
+async function enforceServerLock(req) {
+  const locked = await effectiveLockedServer(req.user);
+  if (!locked) return req.query.serverId || null;
+  // У юзера есть локированный сервер и нет multi_server.
+  // Если ничего не указано — отдаём locked. Если указано другое — заменяем на locked.
+  return locked;
+}
+
 // GET /api/articles?serverId=...&categoryId=...
-router.get('/', async (req, res) => {
+router.get('/', optionalAuth, async (req, res) => {
   try {
-    const { serverId, categoryId } = req.query;
+    const serverId = await enforceServerLock(req);
+    const { categoryId } = req.query;
     let sql = 'SELECT * FROM articles WHERE is_active = 1';
     const params = [];
     if (serverId) {
@@ -40,9 +51,10 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/articles/search?q=...&serverId=...
-router.get('/search', async (req, res) => {
+router.get('/search', optionalAuth, async (req, res) => {
   try {
-    const { q, serverId, categoryId } = req.query;
+    const serverId = await enforceServerLock(req);
+    const { q, categoryId } = req.query;
     const pattern = `%${(q || '').trim()}%`;
     let sql = `
       SELECT * FROM articles

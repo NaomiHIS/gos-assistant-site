@@ -148,7 +148,7 @@ async function runMigrations() {
        VALUES ('lite', 'Lite',
                'Базовая подписка: безлимит заметок, темы, без рекламы',
                '#7B2BFF',
-               JSON_ARRAY('notes_unlimited', 'themes_extra', 'no_ads'),
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'no_ads', 'multi_server'),
                14900, 'RUB', 30, 1, 5)`
     );
     await db.query(
@@ -156,7 +156,7 @@ async function runMigrations() {
        VALUES ('premium', 'Premium',
                'Полный доступ: AI-ассистент, приоритетная поддержка, ранний доступ',
                '#DF005B',
-               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant'),
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant', 'multi_server'),
                29900, 'RUB', 30, 1, 10)`
     );
     console.log('[InitDB] ✓ subscription tables ensured');
@@ -239,6 +239,26 @@ async function runMigrations() {
     `);
     await db.query('INSERT IGNORE INTO site_contacts (id) VALUES (1)');
     console.log('[InitDB] ✓ site_contacts ensured');
+
+    // ============================================================
+    // Users.locked_server_id — закреплённый сервер (без multi_server только он доступен)
+    // ============================================================
+    await ensureColumn('users', 'locked_server_id', 'VARCHAR(64) NULL');
+
+    // ============================================================
+    // Notes share: один снимок заметок на пользователя + публичный код
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS note_shares (
+        user_id INT PRIMARY KEY,
+        code VARCHAR(16) NOT NULL UNIQUE,
+        snapshot JSON NULL,
+        notes_count INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_code (code)
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] ✓ note_shares ensured');
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (

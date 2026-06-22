@@ -66,6 +66,24 @@
   }
 
   setMode(mode);
+  loadServers();
+
+  async function loadServers() {
+    const select = $('reg-server');
+    if (!select) return;
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/servers').then((r) => r.json());
+      const list = Array.isArray(res) ? res : (res.servers || []);
+      if (!list.length) {
+        select.innerHTML = '<option value="">Серверы пока недоступны</option>';
+        return;
+      }
+      select.innerHTML = '<option value="">— Выберите сервер —</option>' +
+        list.map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
+    } catch {
+      select.innerHTML = '<option value="">Не удалось загрузить серверы</option>';
+    }
+  }
 
   switchLink.addEventListener('click', () => {
     setMode(mode === 'login' ? 'register' : 'login');
@@ -129,6 +147,7 @@
     const password = $('reg-password').value;
     const password2 = $('reg-password2').value;
     const acceptTerms = $('reg-accept-terms').checked;
+    const serverId = $('reg-server').value;
 
     if (password !== password2) {
       showError('Пароли не совпадают');
@@ -138,13 +157,17 @@
       showError('Необходимо принять Условия использования и Политику конфиденциальности');
       return;
     }
+    if (!serverId) {
+      showError('Выберите свой сервер');
+      return;
+    }
 
     const btn = $('register-submit');
     btn.disabled = true;
     btn.textContent = 'Создание...';
 
     try {
-      const data = await window.GosClient.auth.register(email, username, password, acceptTerms);
+      const data = await window.GosClient.auth.register(email, username, password, acceptTerms, serverId);
       if (data.success) {
         window.GosClient.setToken(data.token);
         window.GosClient.setUser(data.user);
