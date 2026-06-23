@@ -16,7 +16,7 @@ const FEATURE_KEY = 'ai_assistant';
 // AI_MAX_TOKENS  — лимит ответа
 const AI_BASE_URL = (process.env.AI_API_BASE_URL || 'https://api.vsegpt.ru/v1').replace(/\/+$/, '');
 const AI_API_KEY = process.env.AI_API_KEY || '';
-const AI_MODEL = process.env.AI_MODEL || 'anthropic/claude-sonnet-4.5-thinking';
+const AI_MODEL = process.env.AI_MODEL || 'google/gemini-3-flash-pre-thinking';
 const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '800', 10);
 const AI_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.4');
 
