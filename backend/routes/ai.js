@@ -17,7 +17,7 @@ const FEATURE_KEY = 'ai_assistant';
 const AI_BASE_URL = (process.env.AI_API_BASE_URL || 'https://api.vsegpt.ru/v1').replace(/\/+$/, '');
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'google/gemini-3.1-pro-preview-1m';
-const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '800', 10);
+const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '2000', 10);
 const AI_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.4');
 
 // ============================================================
@@ -360,6 +360,8 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     }
 
     const reply = data?.choices?.[0]?.message?.content || '';
+    const finishReason = data?.choices?.[0]?.finish_reason || null;
+    const truncated = finishReason === 'length';
     if (!reply) {
       return res.status(502).json({ error: 'AI вернул пустой ответ', raw: data });
     }
@@ -393,6 +395,8 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
         title: a.title,
       })),
       invalidRefs,
+      truncated,
+      finishReason,
     });
   } catch (err) {
     console.error('[AI] fetch error:', err);
