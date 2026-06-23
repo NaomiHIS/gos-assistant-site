@@ -7,6 +7,7 @@ router.get('/', async (req, res) => {
   const rows = await db.query(
     'SELECT id, name, short_name AS shortName, color, type FROM categories WHERE is_active = 1 ORDER BY sort_order, name'
   );
+  res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=900');
   res.json(rows);
 });
 

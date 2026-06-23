@@ -31,7 +31,8 @@ router.get('/', optionalAuth, async (req, res) => {
   try {
     const serverId = await enforceServerLock(req);
     const { categoryId } = req.query;
-    let sql = 'SELECT * FROM articles WHERE is_active = 1';
+    // Только нужные клиенту колонки (без is_active/created_at/updated_at) — меньше байт по сети
+    let sql = 'SELECT id, server_id, category_id, code, title, text, penalty, wanted_stars FROM articles WHERE is_active = 1';
     const params = [];
     if (serverId) {
       sql += ' AND server_id = ?';
@@ -43,6 +44,8 @@ router.get('/', optionalAuth, async (req, res) => {
     }
     sql += ' ORDER BY category_id, sort_order, code';
     const rows = await db.query(sql, params);
+    // Короткий публичный кэш — UI и так знает, что данные могут обновиться, но между быстрыми перезагрузками экономим запросы.
+    res.set('Cache-Control', 'public, max-age=120, stale-while-revalidate=600');
     res.json(rows.map(mapArticle));
   } catch (err) {
     console.error(err);
