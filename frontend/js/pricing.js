@@ -70,6 +70,7 @@
     export_data: 'Экспорт заметок и данных',
     custom_hotkeys: 'Расширенные горячие клавиши',
     ai_assistant: 'AI-ассистент по законам',
+    multi_server: 'Просмотр законов всех серверов',
   };
 
   function renderPlans() {
