@@ -339,6 +339,8 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     user: 'u' + req.user.id,
   };
 
+  const upstreamController = new AbortController();
+  const upstreamTimeout = setTimeout(() => upstreamController.abort(), 90000);
   try {
     const upstream = await fetch(url, {
       method: 'POST',
@@ -347,6 +349,7 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
         Authorization: 'Bearer ' + AI_API_KEY,
       },
       body: JSON.stringify(payload),
+      signal: upstreamController.signal,
     });
 
     const text = await upstream.text();
@@ -399,8 +402,14 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
       finishReason,
     });
   } catch (err) {
+    if (err.name === 'AbortError') {
+      console.error('[AI] upstream timeout (90s)');
+      return res.status(504).json({ error: 'AI-провайдер не ответил за 90 секунд. Попробуйте упростить вопрос или повторите.' });
+    }
     console.error('[AI] fetch error:', err);
     res.status(502).json({ error: 'Не удалось связаться с AI-провайдером: ' + err.message });
+  } finally {
+    clearTimeout(upstreamTimeout);
   }
 });
 
