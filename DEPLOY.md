@@ -71,7 +71,7 @@ CORS_ORIGIN = *
 
 1. В сервисе **gos-assistant-site** → вкладка **Settings**
 2. Раздел **Networking** → **Generate Domain**
-3. Railway выдаст URL вида `gos-assistant-site-production.up.railway.app`
+3. Railway выдаст URL вида `gosassistent.su`
 4. Открой этот URL в браузере — должен открыться твой сайт
 
 ## Шаг 7 — Создай первого администратора
@@ -90,7 +90,7 @@ UPDATE users SET role='admin' WHERE email='твой@email.com';
 1. Запусти GOS Assistant (`D:\MVD Assistant`, `npm start`)
 2. Войди в аккаунт
 3. Открой **Настройки** → найди поле **URL сервера**
-4. Впиши: `https://gos-assistant-site-production.up.railway.app/api`
+4. Впиши: `https://gosassistent.su/api`
 5. Нажми **Сохранить**
 
 С этого момента приложение будет брать данные из твоей боевой базы.

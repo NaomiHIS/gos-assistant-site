@@ -29,7 +29,7 @@ async function createPayment({ payment, plan, user, provider, returnUrl }) {
     description: `Подписка ${plan.name} (${plan.duration_days} дн.) для ${user.email}`,
     confirmation: {
       type: 'redirect',
-      return_url: returnUrl || cfg.return_url || 'https://gos-assistant-site-production.up.railway.app/cabinet.html',
+      return_url: returnUrl || cfg.return_url || 'https://gosassistent.su/cabinet.html',
     },
     metadata: {
       payment_id: String(payment.id),
