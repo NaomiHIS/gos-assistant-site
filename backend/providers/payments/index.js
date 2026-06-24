@@ -3,6 +3,7 @@
 // Чтобы добавить нового — положи модуль рядом и зарегистрируй здесь.
 // ============================================================
 const yookassa = require('./yookassa');
+const robokassa = require('./robokassa');
 const manual = require('./manual');
 
 const adapters = new Map();
@@ -10,6 +11,7 @@ function register(adapter) {
   adapters.set(adapter.slug, adapter);
 }
 register(yookassa);
+register(robokassa);
 register(manual);
 
 function get(slug) {

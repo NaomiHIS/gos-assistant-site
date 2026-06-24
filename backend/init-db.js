@@ -209,6 +209,25 @@ async function runMigrations() {
     );
     await db.query(
       `INSERT IGNORE INTO payment_providers (slug, name, description, config, is_enabled, sort_order)
+       VALUES ('robokassa', 'Robokassa',
+               'Онлайн-оплата картами, СБП и кошельками через Robokassa',
+               JSON_OBJECT(
+                 'merchant_login', '',
+                 'password_1', '',
+                 'password_2', '',
+                 'test_password_1', '',
+                 'test_password_2', '',
+                 'is_test', false,
+                 'hash_algo', 'md5',
+                 'send_receipt', false,
+                 'tax_system', 'usn_income',
+                 'vat', 'none',
+                 'payment_object', 'service'
+               ),
+               0, 20)`
+    );
+    await db.query(
+      `INSERT IGNORE INTO payment_providers (slug, name, description, config, is_enabled, sort_order)
        VALUES ('manual', 'Ручная выдача',
                'Заявка на оплату — админ выдаёт подписку после поступления средств',
                JSON_OBJECT('instructions', ''),

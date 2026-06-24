@@ -135,7 +135,7 @@ router.delete('/providers/:id', requireAuth, requireRole('admin'), async (req, r
     const used = await db.queryOne(
       `SELECT p.slug FROM payment_providers p WHERE p.id = ?`, [id]
     );
-    if (used && (used.slug === 'yookassa' || used.slug === 'manual')) {
+    if (used && (used.slug === 'yookassa' || used.slug === 'robokassa' || used.slug === 'manual')) {
       return res.status(400).json({ error: 'Этот провайдер встроенный — его можно только отключить' });
     }
     await db.query('DELETE FROM payment_providers WHERE id = ?', [id]);
@@ -366,8 +366,12 @@ router.post('/webhook/:slug', async (req, res) => {
       return res.status(200).json({ ok: true, notFound: true });
     }
 
-    // Идемпотентность: уже обработан
+    // Идемпотентность: уже обработан. Для Robokassa важно ответить тем же OK<InvId>,
+    // иначе она продолжит ретраи.
     if (payment.status === parsed.status) {
+      if (parsed.webhookResponse !== undefined) {
+        return res.type('text/plain').send(String(parsed.webhookResponse));
+      }
       return res.json({ ok: true, alreadyApplied: true });
     }
 
@@ -390,6 +394,10 @@ router.post('/webhook/:slug', async (req, res) => {
       await db.query(`UPDATE payments SET status = ? WHERE id = ?`, [parsed.status, payment.id]);
     }
 
+    // Robokassa и другие провайдеры могут требовать конкретный формат ответа.
+    if (parsed.webhookResponse !== undefined) {
+      return res.type('text/plain').send(String(parsed.webhookResponse));
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('[Payments] webhook error:', err);
