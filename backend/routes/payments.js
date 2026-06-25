@@ -329,28 +329,34 @@ router.put('/:id/mark', requireAuth, requireRole('admin'), async (req, res) => {
 });
 
 // ============================================================
-// POST /api/payments/webhook/:slug — провайдеры присылают сюда события
+// /api/payments/webhook/:slug — провайдеры присылают сюда события.
+// Поддерживаем и POST (YooKassa, Robokassa-POST) и GET (Robokassa-GET).
 // Без auth. Внутри — провайдер проверяет подпись/IP.
 // ============================================================
-router.post('/webhook/:slug', async (req, res) => {
+router.all('/webhook/:slug', async (req, res) => {
   try {
     const slug = req.params.slug;
     const adapter = providers.get(slug);
     const providerRow = await loadProvider(slug);
     if (!adapter || !providerRow) return res.status(404).json({ error: 'Unknown provider' });
 
+    // Объединяем body (POST/form) и query (GET) — какой бы метод не выбрал провайдер,
+    // адаптер получит все поля. body имеет приоритет если ключи дублируются.
+    const merged = { ...(req.query || {}), ...(req.body || {}) };
+    console.log(`[Payments] webhook ${slug} ${req.method} fields:`, Object.keys(merged).join(','));
+
     // Опциональная проверка IP (YooKassa whitelist)
     if (adapter.ipAllowed) {
       const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
       if (!adapter.ipAllowed(ip)) {
         console.warn(`[Payments] webhook ${slug} from unknown IP: ${ip}`);
-        // не блокируем 403-м, чтобы не палить логику атакующему, но не обрабатываем
         return res.status(200).json({ ok: true });
       }
     }
 
-    const parsed = adapter.parseWebhook({ body: req.body, headers: req.headers, provider: providerRow });
+    const parsed = adapter.parseWebhook({ body: merged, headers: req.headers, provider: providerRow });
     if (!parsed) {
+      console.warn(`[Payments] webhook ${slug}: adapter returned null (см. лог выше — обычно невалидная подпись)`);
       return res.status(200).json({ ok: true, ignored: true });
     }
 

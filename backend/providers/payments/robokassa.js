@@ -141,15 +141,17 @@ function parseWebhook({ body, provider }) {
   const outSum = body.OutSum || body.outSum;
   const invId = body.InvId || body.invId;
   const sig = (body.SignatureValue || body.signatureValue || '').toString().toUpperCase();
-  if (!outSum || !invId || !sig) return null;
-
-  const password2 = pickPassword(cfg, 2);
-  if (!password2) {
-    console.error('[Robokassa] password_2 не настроен — невозможно проверить подпись');
+  if (!outSum || !invId || !sig) {
+    console.warn('[Robokassa] webhook missing fields. keys:', Object.keys(body).join(','));
     return null;
   }
 
-  // Соберём Shp_* отсортированно
+  const password2 = pickPassword(cfg, 2);
+  if (!password2) {
+    console.error('[Robokassa] password_2 не настроен (is_test=' + !!cfg.is_test + ')');
+    return null;
+  }
+
   const shpEntries = Object.entries(body)
     .filter(([k]) => /^Shp_/i.test(k))
     .sort(([a], [b]) => a.localeCompare(b))
@@ -159,7 +161,18 @@ function parseWebhook({ body, provider }) {
   const expected = sign(cfg, parts);
 
   if (expected !== sig) {
-    console.warn('[Robokassa] invalid signature for InvId=' + invId);
+    console.warn(
+      '[Robokassa] BAD SIGNATURE InvId=' + invId +
+      ' algo=' + hashAlgo(cfg) +
+      ' is_test=' + !!cfg.is_test +
+      ' pwd2_len=' + password2.length +
+      ' shp=[' + shpEntries.map((s) => s.split('=')[0]).join(',') + ']' +
+      ' expected=' + expected +
+      ' got=' + sig +
+      ' — проверьте: 1) hash_algo в config совпадает с алгоритмом в кабинете Robokassa; ' +
+      '2) is_test=true когда магазин в тестовом режиме (тогда нужен test_password_2); ' +
+      '3) указан password_2 (а не password_1).'
+    );
     return null;
   }
 
