@@ -44,6 +44,53 @@
     refreshSupportBadge();
     loadSubscription();
     handleDiscordReturnParams();
+    handlePaymentReturn();
+  }
+
+  // ============================================================
+  // Возврат из платёжного провайдера: страховка от потерянного webhook'а.
+  // Если в URL ?paid=... — берём свой последний pending платёж и опрашиваем
+  // /payments/:id/check несколько раз. Backend сам спросит провайдера и при
+  // succeeded выдаст подписку. После — перерисовываем карточку.
+  // ============================================================
+  async function handlePaymentReturn() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has('paid')) return;
+    // Чистим query, чтобы при перезагрузке поллинг не запускался повторно.
+    history.replaceState({}, '', location.pathname + location.hash);
+
+    try {
+      const data = await window.GosClient.payments.mine();
+      const list = (data && data.payments) || [];
+      // Берём самый свежий pending — это то, за что юзер только что заплатил.
+      const target = list.find((p) => p.status === 'pending');
+      if (!target) {
+        loadSubscription();
+        return;
+      }
+
+      window.toast('Проверяем оплату…');
+      // 6 попыток с возрастающей паузой: 1.5, 3, 5, 8, 12, 20 секунд.
+      const delays = [1500, 3000, 5000, 8000, 12000, 20000];
+      for (const d of delays) {
+        await new Promise((r) => setTimeout(r, d));
+        try {
+          const r = await window.GosClient.payments.check(target.id);
+          if (r && r.success && r.status === 'succeeded') {
+            window.toast('Подписка активирована');
+            await loadSubscription();
+            return;
+          }
+          if (r && (r.status === 'canceled' || r.status === 'failed')) {
+            window.toast('Оплата не прошла');
+            return;
+          }
+        } catch (_) { /* ignore, попробуем ещё раз */ }
+      }
+      window.toast('Оплата ещё в обработке. Если подписка не появится через минуту — напишите в поддержку.');
+    } catch (err) {
+      console.warn('[Cabinet] handlePaymentReturn:', err);
+    }
   }
 
   function renderHeader() {

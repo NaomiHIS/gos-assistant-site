@@ -104,10 +104,46 @@ function ipAllowed(ip) {
   });
 }
 
+// ============================================================
+// checkStatus — fallback на случай потерянного webhook.
+// GET https://api.yookassa.ru/v3/payments/{id}
+// ============================================================
+async function checkStatus({ payment, provider }) {
+  const cfg = provider.config || {};
+  const externalId = payment.external_id || payment.externalId;
+  if (!externalId) {
+    return { externalId: null, status: 'pending', raw: { reason: 'no external_id yet' } };
+  }
+  const res = await fetch(API_BASE + '/payments/' + encodeURIComponent(externalId), {
+    method: 'GET',
+    headers: { Authorization: authHeader(cfg) },
+  });
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch { data = null; }
+  if (!res.ok) {
+    throw new Error('YooKassa GET payment HTTP ' + res.status + ': ' + text.slice(0, 300));
+  }
+  let status = 'pending';
+  switch (data && data.status) {
+    case 'succeeded': status = 'succeeded'; break;
+    case 'canceled':  status = 'canceled';  break;
+    case 'waiting_for_capture':
+    case 'pending':   status = 'pending';   break;
+  }
+  return {
+    externalId,
+    status,
+    paidAt: status === 'succeeded' && data && data.captured_at ? new Date(data.captured_at) : null,
+    raw: data,
+  };
+}
+
 module.exports = {
   slug: 'yookassa',
   isOnline: true,
   createPayment,
   parseWebhook,
   ipAllowed,
+  checkStatus,
 };

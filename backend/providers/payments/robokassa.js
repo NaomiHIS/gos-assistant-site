@@ -188,6 +188,66 @@ function parseWebhook({ body, provider }) {
 }
 
 // ============================================================
+// checkStatus — fallback на случай потерянного ResultURL.
+// Robokassa OpStateExt: GET https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpStateExt
+// Params: MerchantLogin, InvoiceID, Signature=MD5(MerchantLogin:InvoiceID:Password2)
+// Возвращает XML; нас интересует <State><Code>N</Code>.
+//   5  — initiated
+//   10 — canceled
+//   50 — paid, sent to merchant
+//   80 — frozen
+//   100 — completed (успех)
+// ============================================================
+const OP_STATE_URL = 'https://auth.robokassa.ru/Merchant/WebService/Service.asmx/OpStateExt';
+
+async function checkStatus({ payment, provider }) {
+  const cfg = provider.config || {};
+  ensureCreds(cfg);
+  const merchant = cfg.merchant_login;
+  const invId = String(payment.id);
+  const password2 = pickPassword(cfg, 2);
+  const signature = sign(cfg, [merchant, invId, password2]);
+
+  const params = new URLSearchParams({
+    MerchantLogin: merchant,
+    InvoiceID: invId,
+    Signature: signature,
+  });
+  const url = OP_STATE_URL + '?' + params.toString();
+
+  const res = await fetch(url, { method: 'GET' });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error('Robokassa OpStateExt HTTP ' + res.status + ': ' + text.slice(0, 300));
+  }
+  // Простой парс XML регуляркой — без зависимости.
+  const resultCodeMatch = text.match(/<Result>\s*<Code>(\d+)<\/Code>/i);
+  const stateCodeMatch = text.match(/<State>\s*<Code>(\d+)<\/Code>/i);
+  const stateDateMatch = text.match(/<StateDate>([^<]+)<\/StateDate>/i);
+
+  const resultCode = resultCodeMatch ? parseInt(resultCodeMatch[1], 10) : null;
+  const stateCode = stateCodeMatch ? parseInt(stateCodeMatch[1], 10) : null;
+
+  if (resultCode !== 0) {
+    // 1 — нет операции с таким InvoiceID; 3 — нет прав; 5 — внутренняя ошибка.
+    return { externalId: invId, status: 'pending', raw: { resultCode, text: text.slice(0, 500) } };
+  }
+
+  let status = 'pending';
+  if (stateCode === 100 || stateCode === 50) status = 'succeeded';
+  else if (stateCode === 10) status = 'canceled';
+  else if (stateCode === 60) status = 'refunded';
+  // 5, 80 → pending
+
+  return {
+    externalId: invId,
+    status,
+    paidAt: status === 'succeeded' && stateDateMatch ? new Date(stateDateMatch[1]) : null,
+    raw: { resultCode, stateCode },
+  };
+}
+
+// ============================================================
 // IP-фильтр опционален. Robokassa публикует диапазоны, но подпись + Password2
 // уже даёт достаточную защиту. Не задействуем.
 // ============================================================
@@ -197,4 +257,5 @@ module.exports = {
   isOnline: true,
   createPayment,
   parseWebhook,
+  checkStatus,
 };

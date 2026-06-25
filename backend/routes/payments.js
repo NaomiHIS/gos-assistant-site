@@ -14,6 +14,42 @@ function parseJson(raw) {
   try { return JSON.parse(raw); } catch { return {}; }
 }
 
+function toMysqlDate(d) {
+  const dt = d instanceof Date ? d : new Date(d || Date.now());
+  return dt.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+// Применяет результат от webhook/checkStatus к платежу: при succeeded
+// выдаёт подписку (если ещё не выдана) и обновляет строку. Возвращает
+// финальный статус. Идемпотентно: повторный вызов с тем же статусом — no-op.
+async function finalizePayment({ payment, parsed, slug, source }) {
+  if (!parsed || !parsed.status) return payment.status;
+  if (payment.status === parsed.status) return payment.status;
+
+  if (parsed.status === 'succeeded') {
+    const plan = await loadPlan(payment.planId);
+    if (!plan) {
+      console.error('[Payments] finalizePayment: план не найден для платежа', payment.id);
+      return payment.status;
+    }
+    const subId = await grantSubscription({
+      userId: payment.userId,
+      planId: plan.id,
+      durationDays: plan.durationDays,
+      notes: (source || 'auto') + ': ' + slug + ' #' + parsed.externalId,
+    });
+    await db.query(
+      `UPDATE payments SET status = 'succeeded', paid_at = ?, granted_subscription_id = ?
+        WHERE id = ? AND status <> 'succeeded'`,
+      [toMysqlDate(parsed.paidAt), subId, payment.id]
+    );
+    console.log(`[Payments] ${source} granted sub#${subId} for payment#${payment.id} (${slug})`);
+    return 'succeeded';
+  }
+  await db.query(`UPDATE payments SET status = ? WHERE id = ?`, [parsed.status, payment.id]);
+  return parsed.status;
+}
+
 async function loadProvider(slug) {
   const row = await db.queryOne(
     'SELECT id, slug, name, description, config, is_enabled AS isEnabled, sort_order AS sortOrder FROM payment_providers WHERE slug = ?',
@@ -329,6 +365,60 @@ router.put('/:id/mark', requireAuth, requireRole('admin'), async (req, res) => {
 });
 
 // ============================================================
+// GET /api/payments/:id/check — фронт дёргает после возврата с оплаты,
+// чтобы подтянуть статус из провайдера (страховка от потерянных webhook'ов).
+// Доступно владельцу платежа и админу. Идемпотентно.
+// ============================================================
+router.get('/:id/check', requireAuth, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Неверный id' });
+
+    const payment = await db.queryOne(
+      `SELECT id, user_id AS userId, plan_id AS planId, provider_slug AS providerSlug,
+              external_id AS externalId, status, amount_cents AS amountCents, currency
+         FROM payments WHERE id = ?`,
+      [id]
+    );
+    if (!payment) return res.status(404).json({ error: 'Платёж не найден' });
+    if (payment.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Нет доступа' });
+    }
+
+    // Уже завершён — отдаём как есть, к провайдеру не ходим.
+    if (payment.status === 'succeeded' || payment.status === 'canceled' || payment.status === 'refunded') {
+      return res.json({ success: true, status: payment.status, alreadyFinal: true });
+    }
+
+    const adapter = providers.get(payment.providerSlug);
+    const providerRow = await loadProvider(payment.providerSlug);
+    if (!adapter || !providerRow || !adapter.checkStatus) {
+      return res.json({ success: true, status: payment.status, supported: false });
+    }
+
+    let parsed;
+    try {
+      parsed = await adapter.checkStatus({
+        payment: { id: payment.id, external_id: payment.externalId, externalId: payment.externalId },
+        provider: providerRow,
+      });
+    } catch (err) {
+      console.error('[Payments] checkStatus error:', err);
+      return res.status(502).json({ error: 'Не удалось проверить статус: ' + err.message });
+    }
+
+    const finalStatus = await finalizePayment({
+      payment, parsed, slug: payment.providerSlug, source: 'check',
+    });
+
+    res.json({ success: true, status: finalStatus, providerStatus: parsed && parsed.status });
+  } catch (err) {
+    console.error('[Payments] /check error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
 // /api/payments/webhook/:slug — провайдеры присылают сюда события.
 // Поддерживаем и POST (YooKassa, Robokassa-POST) и GET (Robokassa-GET).
 // Без auth. Внутри — провайдер проверяет подпись/IP.
@@ -372,33 +462,7 @@ router.all('/webhook/:slug', async (req, res) => {
       return res.status(200).json({ ok: true, notFound: true });
     }
 
-    // Идемпотентность: уже обработан. Для Robokassa важно ответить тем же OK<InvId>,
-    // иначе она продолжит ретраи.
-    if (payment.status === parsed.status) {
-      if (parsed.webhookResponse !== undefined) {
-        return res.type('text/plain').send(String(parsed.webhookResponse));
-      }
-      return res.json({ ok: true, alreadyApplied: true });
-    }
-
-    if (parsed.status === 'succeeded') {
-      const plan = await loadPlan(payment.planId);
-      if (plan) {
-        const subId = await grantSubscription({
-          userId: payment.userId,
-          planId: plan.id,
-          durationDays: plan.durationDays,
-          notes: 'Auto: ' + slug + ' #' + parsed.externalId,
-        });
-        await db.query(
-          `UPDATE payments SET status = 'succeeded', paid_at = ?, granted_subscription_id = ? WHERE id = ?`,
-          [parsed.paidAt ? parsed.paidAt.toISOString().slice(0, 19).replace('T', ' ') : new Date().toISOString().slice(0, 19).replace('T', ' '),
-           subId, payment.id]
-        );
-      }
-    } else {
-      await db.query(`UPDATE payments SET status = ? WHERE id = ?`, [parsed.status, payment.id]);
-    }
+    await finalizePayment({ payment, parsed, slug, source: 'webhook' });
 
     // Robokassa и другие провайдеры могут требовать конкретный формат ответа.
     if (parsed.webhookResponse !== undefined) {

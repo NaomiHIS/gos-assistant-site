@@ -188,6 +188,7 @@
       myProviders: () => request('GET', '/payments/providers'),
       create: (data) => request('POST', '/payments/create', data),
       mine: () => request('GET', '/payments/mine'),
+      check: (id) => request('GET', '/payments/' + id + '/check'),
       // Admin
       listAll: (params) => {
         const qs = new URLSearchParams(params || {}).toString();
