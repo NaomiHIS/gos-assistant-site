@@ -222,6 +222,7 @@ async function runMigrations() {
                  'send_receipt', false,
                  'tax_system', 'usn_income',
                  'vat', 'none',
+                 'payment_method', 'full_payment',
                  'payment_object', 'service'
                ),
                0, 20)`

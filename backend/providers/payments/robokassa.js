@@ -14,9 +14,10 @@
 //   "test_password_2":"test password 2",
 //   "is_test":        false,               // включает IsTest=1
 //   "hash_algo":      "md5",               // md5 | sha256 | sha384 | sha512 — должен совпадать с настройкой в кабинете
-//   "send_receipt":   false,               // включить блок Receipt для фискализации
+//   "send_receipt":   false,               // включить блок Receipt для фискализации (54-ФЗ)
 //   "tax_system":     "usn_income",        // sno: osn | usn_income | usn_income_outcome | esn | patent
 //   "vat":            "none",              // none | vat0 | vat10 | vat20 | vat110 | vat120
+//   "payment_method": "full_payment",      // full_payment (услуга оказана сразу) | full_prepayment (если будет 2й чек)
 //   "payment_object": "service",           // commodity | service | payment | ...
 //   "result_url":     null                 // переопределение (если не задано — генерится из текущего хоста)
 // }
@@ -58,7 +59,10 @@ function ensureCreds(cfg) {
 }
 
 // ============================================================
-// Receipt (54-ФЗ). Собираем один item на всю сумму = название тарифа.
+// Receipt (54-ФЗ). Один item на всю сумму = название тарифа.
+// payment_method: 'full_payment' — подписка активируется СРАЗУ после оплаты,
+// поэтому второй чек (second_receipt) не нужен. Если поменять на full_prepayment —
+// надо будет потом дослать чек full_payment отдельным API-вызовом.
 // ============================================================
 function buildReceipt(cfg, plan, payment) {
   return {
@@ -68,7 +72,7 @@ function buildReceipt(cfg, plan, payment) {
         name: ('Подписка ' + (plan.name || ('#' + plan.id)) + ', ' + plan.duration_days + ' дн.').slice(0, 128),
         quantity: 1,
         sum: Number(formatSum(payment.amount_cents)),
-        payment_method: 'full_prepayment',
+        payment_method: cfg.payment_method || 'full_payment',
         payment_object: cfg.payment_object || 'service',
         tax: cfg.vat || 'none',
       },
