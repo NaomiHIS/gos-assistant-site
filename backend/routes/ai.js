@@ -18,7 +18,7 @@ const AI_BASE_URL = (process.env.AI_API_BASE_URL || 'https://api.vsegpt.ru/v1').
 const AI_API_KEY = process.env.AI_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'google/gemini-3.1-pro-preview-1m';
 const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '2000', 10);
-const AI_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.4');
+const AI_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.2');
 
 // ============================================================
 // Available role personas — passed by client to bias the system prompt.
@@ -44,8 +44,9 @@ const ROLE_LABEL = {
 // RAG: ищем релевантные статьи в БД по тексту последнего сообщения
 // ============================================================
 const ARTICLE_CATS = ['УК', 'АК', 'ДК', 'ПК', 'УАК'];
-const MAX_ARTICLE_TEXT = 240; // символов на статью в prompt
-const MAX_ARTICLES_INJECT = 10;
+const MAX_ARTICLE_TEXT = 500; // символов на статью в prompt
+const MAX_ARTICLES_INJECT = 20;
+const MAX_CODE_LOOKUP = 8; // прямой lookup статей по упомянутому номеру
 
 function sanitizeQuery(s) {
   return String(s || '')
@@ -55,14 +56,52 @@ function sanitizeQuery(s) {
     .trim();
 }
 
+// Извлекает явно упомянутые номера статей из текста: "ст. 1.5", "264 УК", "статья 12.7" и т.п.
+function extractMentionedCodes(text) {
+  if (!text) return [];
+  const re = /(?:ст(?:атья|\.|\b)\.?\s*)?(\d+(?:\.\d+)?)/g;
+  const out = new Set();
+  let m;
+  while ((m = re.exec(text))) {
+    const code = m[1];
+    // Игнорируем "плоские" числа без точки если они слишком короткие (вероятно не статья)
+    if (!code.includes('.') && code.length < 2) continue;
+    out.add(code);
+    if (out.size >= 12) break;
+  }
+  return Array.from(out);
+}
+
+// Прямой lookup статей по упомянутым в вопросе номерам — гарантирует, что
+// если юзер пишет "по ст. 264" — AI получит именно её, а не догадки.
+async function findByCode(serverId, codes) {
+  if (!serverId || !codes.length) return [];
+  const placeholders = codes.map(() => '?').join(',');
+  try {
+    return await db.query(
+      `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+              c.short_name AS catShort, c.name AS catName
+         FROM articles a
+         LEFT JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ? AND a.is_active = 1 AND a.code IN (${placeholders})
+        LIMIT ?`,
+      [serverId, ...codes, MAX_CODE_LOOKUP]
+    );
+  } catch (err) {
+    console.warn('[AI] findByCode failed:', err.message);
+    return [];
+  }
+}
+
 async function findRelevantArticles(serverId, query) {
   if (!serverId) return [];
   const q = sanitizeQuery(query);
   if (q.length < 3) return [];
 
+  let semantic = [];
   // 1. FULLTEXT (idx_fulltext on articles(title, text))
   try {
-    const rows = await db.query(
+    semantic = await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName,
               MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE) AS score
@@ -75,38 +114,63 @@ async function findRelevantArticles(serverId, query) {
         LIMIT ?`,
       [q, serverId, q, MAX_ARTICLES_INJECT]
     );
-    if (rows && rows.length) return rows;
   } catch (err) {
     console.warn('[AI] FULLTEXT search failed, falling back to LIKE:', err.message);
   }
 
   // 2. Fallback: LIKE по топ-5 ключевым словам
-  const keywords = q.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
-  if (!keywords.length) return [];
-  const conds = keywords.map(() => '(a.title LIKE ? OR a.text LIKE ?)').join(' OR ');
-  const params = [serverId];
-  keywords.forEach((k) => params.push('%' + k + '%', '%' + k + '%'));
-  params.push(MAX_ARTICLES_INJECT);
-  try {
-    return await db.query(
-      `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
-              c.short_name AS catShort, c.name AS catName
-         FROM articles a
-         LEFT JOIN categories c ON c.id = a.category_id
-        WHERE a.server_id = ? AND a.is_active = 1 AND (${conds})
-        LIMIT ?`,
-      params
-    );
-  } catch (err) {
-    console.warn('[AI] LIKE search failed:', err.message);
-    return [];
+  if (!semantic || !semantic.length) {
+    const keywords = q.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
+    if (keywords.length) {
+      const conds = keywords.map(() => '(a.title LIKE ? OR a.text LIKE ?)').join(' OR ');
+      const params = [serverId];
+      keywords.forEach((k) => params.push('%' + k + '%', '%' + k + '%'));
+      params.push(MAX_ARTICLES_INJECT);
+      try {
+        semantic = await db.query(
+          `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+                  c.short_name AS catShort, c.name AS catName
+             FROM articles a
+             LEFT JOIN categories c ON c.id = a.category_id
+            WHERE a.server_id = ? AND a.is_active = 1 AND (${conds})
+            LIMIT ?`,
+          params
+        );
+      } catch (err) {
+        console.warn('[AI] LIKE search failed:', err.message);
+      }
+    }
   }
+  semantic = semantic || [];
+
+  // 3. Прямой lookup по номерам статей, упомянутым в тексте.
+  // Эти статьи ставятся в начало списка с пометкой «упомянуто пользователем».
+  const mentionedCodes = extractMentionedCodes(query);
+  const byCode = mentionedCodes.length ? await findByCode(serverId, mentionedCodes) : [];
+
+  // Сливаем без дубликатов: сначала byCode, затем semantic.
+  const seen = new Set(byCode.map((a) => `${a.catShort || ''}:${a.code}`));
+  for (const a of semantic) {
+    const k = `${a.catShort || ''}:${a.code}`;
+    if (!seen.has(k)) {
+      seen.add(k);
+      byCode.push(a);
+      if (byCode.length >= MAX_ARTICLES_INJECT) break;
+    }
+  }
+  return byCode;
 }
 
 function formatArticlesBlock(articles) {
   if (!articles || !articles.length) return '';
-  const lines = ['', '=== Релевантные статьи сервера ===',
-    'Используй ИМЕННО эти статьи для квалификации. Не выдумывай номера. Если ни одна не подходит — скажи что точной статьи в БД не нашлось.'];
+  const lines = [
+    '',
+    '=== БАЗА СТАТЕЙ ЭТОГО СЕРВЕРА ===',
+    'Это ЕДИНСТВЕННЫЙ источник правды о статьях. Любой номер, которого здесь нет, — НЕ СУЩЕСТВУЕТ на этом сервере.',
+    'Каждая статья ниже помечена строгим идентификатором в квадратных скобках: [КОДЕКС ст. НОМЕР]. Цитируй ТОЛЬКО эти идентификаторы дословно, копируй посимвольно.',
+    'Если ни одна статья из списка не подходит — честно скажи: «Подходящей статьи в базе сервера не нашёл, уточни вопрос» и НЕ называй никаких номеров.',
+    '',
+  ];
   for (const a of articles) {
     const code = (a.catShort ? a.catShort + ' ст. ' : '') + a.code;
     const stars = a.wantedStars > 0 ? `${a.wantedStars}★` : '';
@@ -193,11 +257,20 @@ async function buildServerContext(serverId) {
 function buildSystemPrompt(role, context) {
   const persona = ROLE_PROMPTS[role] || ROLE_PROMPTS.civilian;
   const lines = [
-    'Ты — AI-ассистент по законам и правилам ролевых серверов Majestic RP (GTA 5).',
-    'У серверов есть кодексы: УК (Уголовный), АК (Административный), ДК (Должностной), ПК (Полицейский), УАК (Уголовно-административный, маппится в УК) — а также общие правила сервера, правила фракций, эвенты.',
-    'Когда квалифицируешь деяние — обязательно называй конкретный кодекс и номер статьи в формате "УК ст. 1.1", "АК ст. 2.3" и т.п. Если у статьи есть штраф и розыск — приводи цифры.',
-    'Если в вопросе нет важной детали (роль игрока, версия сервера, контекст) — кратко уточни её одним вопросом перед ответом. Не выдумывай статьи, которых нет.',
-    'Отвечай на русском, кратко и по делу. Используй маркированные списки когда уместно. Не давай юридических советов вне игрового контекста.',
+    'Ты — AI-ассистент по законам и правилам ролевых серверов Majestic RP (GTA 5). Это ИГРОВОЙ ВЫМЫШЛЕННЫЙ свод правил, не путать с законодательством РФ.',
+    '',
+    '⛔ ЖЁСТКИЕ ПРАВИЛА ПРОТИВ ВЫДУМЫВАНИЯ СТАТЕЙ — нарушение недопустимо:',
+    '1. Используй ИСКЛЮЧИТЕЛЬНО статьи из раздела «БАЗА СТАТЕЙ ЭТОГО СЕРВЕРА» в этом промпте. Никакие другие.',
+    '2. Полностью забудь номера статей реального УК/АК РФ — на сервере СВОЯ нумерация, не совпадающая с реальной.',
+    '3. Идентификатор статьи в формате [КОДЕКС ст. НОМЕР] копируй ПОСИМВОЛЬНО из квадратных скобок предоставленного списка. Не сокращай, не округляй, не "близко-похожий" номер.',
+    '4. Если ни одна статья из списка не подходит — НЕ ПРИДУМЫВАЙ номер. Скажи: «Подходящей статьи в базе сервера не нашёл, уточни ситуацию или открой поиск в приложении».',
+    '5. У серверов есть кодексы: УК (Уголовный), АК (Административный), ДК (Должностной), ПК (Полицейский), УАК (синоним УК). При цитировании используй именно тот префикс, который указан в идентификаторе статьи.',
+    '',
+    'Формат ответа:',
+    '— Если ссылаешься на статью, обязательно дай: точный идентификатор из списка, краткую формулировку нарушения, и (если есть в данных) штраф / звёзды розыска / срок.',
+    '— Отвечай на русском, кратко и по делу. Используй маркированные списки для перечислений.',
+    '— Если в вопросе не хватает важной детали (роль, обстоятельства, был ли вред) — уточни одним коротким вопросом перед ответом.',
+    '— Не давай юридических советов вне игрового контекста Majestic RP.',
   ];
 
   if (context && context.server) {
@@ -331,59 +404,101 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
   };
 
   const url = AI_BASE_URL + '/chat/completions';
-  const payload = {
-    model: AI_MODEL,
-    messages: [systemMsg, ...cleaned],
-    temperature: AI_TEMPERATURE,
-    max_tokens: AI_MAX_TOKENS,
-    user: 'u' + req.user.id,
-  };
 
-  const upstreamController = new AbortController();
-  const upstreamTimeout = setTimeout(() => upstreamController.abort(), 90000);
-  try {
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + AI_API_KEY,
-      },
-      body: JSON.stringify(payload),
-      signal: upstreamController.signal,
-    });
-
-    const text = await upstream.text();
-    let data;
-    try { data = JSON.parse(text); } catch { data = null; }
-
-    if (!upstream.ok) {
-      console.error('[AI] upstream error', upstream.status, text.slice(0, 500));
-      const message = (data && (data.error?.message || data.message)) || `Upstream HTTP ${upstream.status}`;
-      return res.status(502).json({ error: 'AI-провайдер вернул ошибку: ' + message });
+  async function callUpstream(messages, timeoutMs = 90000) {
+    const upstreamController = new AbortController();
+    const upstreamTimeout = setTimeout(() => upstreamController.abort(), timeoutMs);
+    try {
+      const upstream = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + AI_API_KEY,
+        },
+        body: JSON.stringify({
+          model: AI_MODEL,
+          messages,
+          temperature: AI_TEMPERATURE,
+          max_tokens: AI_MAX_TOKENS,
+          user: 'u' + req.user.id,
+        }),
+        signal: upstreamController.signal,
+      });
+      const t = await upstream.text();
+      let d;
+      try { d = JSON.parse(t); } catch { d = null; }
+      if (!upstream.ok) {
+        const msg = (d && (d.error?.message || d.message)) || `Upstream HTTP ${upstream.status}`;
+        const err = new Error(msg);
+        err.status = upstream.status;
+        err.upstreamBody = t.slice(0, 500);
+        throw err;
+      }
+      return d;
+    } finally {
+      clearTimeout(upstreamTimeout);
     }
+  }
 
-    const reply = data?.choices?.[0]?.message?.content || '';
-    const finishReason = data?.choices?.[0]?.finish_reason || null;
-    const truncated = finishReason === 'length';
+  function detectInvalidRefs(text, validKeys) {
+    if (!validKeys || !validKeys.size) return [];
+    const refs = extractArticleRefs(text);
+    const out = [];
+    const seen = new Set();
+    for (const r of refs) {
+      if (!validKeys.has(r.key) && !seen.has(r.key)) {
+        seen.add(r.key);
+        out.push(r.raw);
+      }
+    }
+    return out;
+  }
+
+  try {
+    let data = await callUpstream([systemMsg, ...cleaned]);
+    let reply = data?.choices?.[0]?.message?.content || '';
+    let finishReason = data?.choices?.[0]?.finish_reason || null;
     if (!reply) {
       return res.status(502).json({ error: 'AI вернул пустой ответ', raw: data });
     }
 
-    // Пост-валидация: ищем в ответе ссылки на статьи и сверяем с БД
+    // Пост-валидация + регенерация: если AI выдумал номера, дёрнем его ещё раз
+    // с явной коррекцией. Максимум 1 дополнительная попытка.
     let invalidRefs = [];
+    let regenerated = false;
     if (serverId) {
       const validKeys = await getValidArticleKeys(serverId);
-      if (validKeys && validKeys.size) {
-        const refs = extractArticleRefs(reply);
-        const seen = new Set();
-        for (const r of refs) {
-          if (!validKeys.has(r.key) && !seen.has(r.key)) {
-            seen.add(r.key);
-            invalidRefs.push(r.raw);
+      invalidRefs = detectInvalidRefs(reply, validKeys);
+      if (invalidRefs.length) {
+        console.warn('[AI] invalid refs, regenerating:', invalidRefs.join(','));
+        const correction = {
+          role: 'system',
+          content:
+            'В твоём предыдущем ответе ссылки на следующие статьи НЕ СУЩЕСТВУЮТ в базе сервера: ' +
+            invalidRefs.map((r) => `«${r}»`).join(', ') +
+            '. Перепиши ответ полностью, заменив их на корректные идентификаторы ИСКЛЮЧИТЕЛЬНО из раздела «БАЗА СТАТЕЙ ЭТОГО СЕРВЕРА». ' +
+            'Если корректной замены нет — честно скажи «Подходящей статьи в базе нет» вместо номера. ' +
+            'Не извиняйся, не упоминай эту коррекцию, не пиши «ошибся» — просто выдай новый чистый ответ.',
+        };
+        try {
+          const retry = await callUpstream(
+            [systemMsg, ...cleaned, { role: 'assistant', content: reply }, correction],
+            60000
+          );
+          const retryReply = retry?.choices?.[0]?.message?.content || '';
+          if (retryReply) {
+            data = retry;
+            reply = retryReply;
+            finishReason = retry?.choices?.[0]?.finish_reason || null;
+            regenerated = true;
+            invalidRefs = detectInvalidRefs(reply, validKeys);
           }
+        } catch (err) {
+          console.warn('[AI] regeneration failed, returning original:', err.message);
         }
       }
     }
+    const truncated = finishReason === 'length';
 
     res.json({
       success: true,
@@ -398,18 +513,21 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
         title: a.title,
       })),
       invalidRefs,
+      regenerated,
       truncated,
       finishReason,
     });
   } catch (err) {
     if (err.name === 'AbortError') {
-      console.error('[AI] upstream timeout (90s)');
+      console.error('[AI] upstream timeout');
       return res.status(504).json({ error: 'AI-провайдер не ответил за 90 секунд. Попробуйте упростить вопрос или повторите.' });
+    }
+    if (err.status) {
+      console.error('[AI] upstream error', err.status, err.upstreamBody || '');
+      return res.status(502).json({ error: 'AI-провайдер вернул ошибку: ' + err.message });
     }
     console.error('[AI] fetch error:', err);
     res.status(502).json({ error: 'Не удалось связаться с AI-провайдером: ' + err.message });
-  } finally {
-    clearTimeout(upstreamTimeout);
   }
 });
 
