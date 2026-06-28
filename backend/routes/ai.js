@@ -80,14 +80,15 @@ async function findByCode(serverId, codes) {
   try {
     // is_active НЕ фильтруем — если юзер явно ссылается на номер статьи,
     // показываем её AI даже если временно деактивирована.
+    // LIMIT инлайним литералом: mysql2.execute() не биндит ? в LIMIT.
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName
          FROM articles a
          LEFT JOIN categories c ON c.id = a.category_id
         WHERE a.server_id = ? AND a.code IN (${placeholders})
-        LIMIT ?`,
-      [serverId, ...codes, MAX_CODE_LOOKUP]
+        LIMIT ${MAX_CODE_LOOKUP}`,
+      [serverId, ...codes]
     );
   } catch (err) {
     console.warn('[AI] findByCode failed:', err.message);
@@ -140,7 +141,7 @@ async function findByStems(serverId, stems, limit) {
   stems.forEach((s) => params.push('%' + s + '%')); // textWeights
   params.push(serverId);
   stems.forEach((s) => params.push('%' + s + '%', '%' + s + '%')); // orConds
-  params.push(limit);
+  const safeLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
   try {
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
@@ -150,7 +151,7 @@ async function findByStems(serverId, stems, limit) {
          LEFT JOIN categories c ON c.id = a.category_id
         WHERE a.server_id = ? AND a.is_active = 1 AND (${orConds})
         ORDER BY score DESC, a.code ASC
-        LIMIT ?`,
+        LIMIT ${safeLimit}`,
       params
     );
   } catch (err) {
@@ -167,6 +168,7 @@ async function findFallback(serverId, limit) {
   // Слабый фильтр: только server_id. Без is_active, без типа категории.
   // Это финальная страховка — лучше дать AI странные/неактивные статьи,
   // чем пустой контекст (тогда он выдумывает номера).
+  const safeLimit = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
   try {
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
@@ -175,8 +177,8 @@ async function findFallback(serverId, limit) {
          LEFT JOIN categories c ON c.id = a.category_id
         WHERE a.server_id = ?
         ORDER BY (a.is_active = 1) DESC, c.sort_order ASC, a.sort_order ASC, a.id ASC
-        LIMIT ?`,
-      [serverId, limit]
+        LIMIT ${safeLimit}`,
+      [serverId]
     );
   } catch (err) {
     console.warn('[AI] findFallback failed:', err.message);
@@ -228,8 +230,8 @@ async function findRelevantArticles(serverId, query) {
             AND a.is_active = 1
             AND MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE)
           ORDER BY score DESC
-          LIMIT ?`,
-        [q, serverId, q, MAX_ARTICLES_INJECT]
+          LIMIT ${MAX_ARTICLES_INJECT}`,
+        [q, serverId, q]
       );
     } catch (err) {
       console.warn('[AI] FULLTEXT failed:', err.message);
