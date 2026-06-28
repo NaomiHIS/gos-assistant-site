@@ -316,7 +316,32 @@ async function runMigrations() {
         INDEX idx_referee_ip (referee_ip, created_at)
       ) ENGINE=InnoDB
     `);
+    await ensureColumn('referrals', 'redeem_source', "ENUM('web','app') NOT NULL DEFAULT 'web'");
+    await ensureColumn('referrals', 'redeem_hwid', 'CHAR(64) NULL');
     console.log('[InitDB] ✓ referrals ensured');
+
+    // ============================================================
+    // user_devices: учёт устройств для антифрод-проверки реферальных кодов.
+    // hwid — SHA-256 от (BIOS UUID + MAC + hostname) — собирается в Electron-app.
+    // Один и тот же HWID не должен быть привязан к двум разным аккаунтам.
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS user_devices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        hwid CHAR(64) NOT NULL,
+        platform VARCHAR(32) NULL,
+        first_ip VARCHAR(45) NULL,
+        last_ip VARCHAR(45) NULL,
+        first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_user_hwid (user_id, hwid),
+        INDEX idx_hwid (hwid),
+        INDEX idx_first_ip (first_ip)
+      ) ENGINE=InnoDB
+    `);
+    await ensureColumn('users', 'referral_redeemed', 'TINYINT(1) NOT NULL DEFAULT 0');
+    console.log('[InitDB] ✓ user_devices ensured');
   } catch (err) {
     console.warn('[InitDB] migration warning:', err.message);
   }

@@ -147,7 +147,7 @@ router.post('/register', async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
-    const { processReferral, extractIp } = require('./referrals');
+    const { extractIp } = require('./referrals');
     const regIp = extractIp(req);
     const result = await db.query(
       `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id, registration_ip)
@@ -155,21 +155,15 @@ router.post('/register', async (req, res) => {
       [email, username, hash, 'user', TERMS_VERSION, serverId, regIp || null]
     );
 
-    // Реферальная программа — тихая обработка, не должна ломать регистрацию
-    let referralResult = null;
-    if (referralCode) {
-      referralResult = await processReferral({
-        referralCode,
-        newUserId: result.insertId,
-        ip: regIp,
-        userAgent: req.headers['user-agent'] || '',
-      });
-    }
+    // Реферальная программа теперь активируется только из приложения через HWID-проверку.
+    // На сайте код параметром `referralCode` принимается, но используется ТОЛЬКО для
+    // подсказки в баннере. Грант происходит в /api/referrals/redeem.
+    // Параметр оставлен для обратной совместимости и не приводит к ошибке если передан.
 
     const user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
     const token = signToken(user);
 
-    res.json({ success: true, token, user: userPublic(user), referral: referralResult });
+    res.json({ success: true, token, user: userPublic(user), pendingReferralCode: referralCode || null });
   } catch (err) {
     console.error('Register error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });

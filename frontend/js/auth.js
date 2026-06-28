@@ -196,17 +196,16 @@
       if (data.success) {
         window.GosClient.setToken(data.token);
         window.GosClient.setUser(data.user);
-        // Очищаем код только при успехе — иначе при ошибке (например email занят)
-        // юзер мог бы потерять реферал.
-        sessionStorage.removeItem('gos_ref_code');
-        let msg = 'Аккаунт создан! Перенаправление...';
-        if (data.referral && data.referral.granted) {
-          msg = '🎁 Аккаунт создан + бонус Lite 7 дней. Перенаправление...';
-        } else if (data.referral && data.referral.blocked) {
-          msg = 'Аккаунт создан (реферальный бонус не выдан, причина проверки безопасности). Перенаправление...';
+        // Не очищаем код — он понадобится юзеру для ввода в приложении.
+        // Запомним отдельно, чтобы показать на странице «после регистрации» / кабинета.
+        if (referralCode) {
+          localStorage.setItem('gos_pending_referral', referralCode);
         }
+        const msg = referralCode
+          ? '✅ Аккаунт создан. Активируйте реферальный код в приложении (Настройки → Реферальная программа). Перенаправление...'
+          : 'Аккаунт создан! Перенаправление...';
         showSuccess(msg);
-        setTimeout(() => redirectAfterAuth(data.user), 600);
+        setTimeout(() => redirectAfterAuth(data.user), 900);
       } else {
         showError(data.error || 'Ошибка регистрации');
       }

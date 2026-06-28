@@ -61,14 +61,19 @@
       const s = data.stats || {};
       el.innerHTML = `
         <div class="text-sm" style="line-height:1.6;margin-bottom:14px">${escapeHtmlSafe(data.programDescription || '')}</div>
+        <div style="background:rgba(223,0,91,0.08);border:1px solid rgba(223,0,91,0.3);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px;line-height:1.5">
+          💡 Бонусы начисляются <b>только после ввода кода в приложении</b> (Настройки → Реферальная программа). Это нужно для проверки устройства против повторных регистраций — иначе награда блокируется.
+        </div>
 
         <div class="input-group">
-          <label class="input-label">Ваша реферальная ссылка</label>
+          <label class="input-label">Ваш реферальный код</label>
           <div style="display:flex;gap:8px;align-items:center">
-            <input type="text" class="input" id="ref-link" value="${escapeHtmlAttr(link)}" readonly style="flex:1;font-family:monospace;font-size:13px" />
+            <input type="text" class="input" id="ref-link" value="${escapeHtmlAttr(data.code)}" readonly style="flex:1;font-family:monospace;font-size:18px;text-align:center;letter-spacing:2px;font-weight:700" />
             <button class="btn btn-primary" id="btn-copy-ref" style="white-space:nowrap">Копировать</button>
           </div>
-          <div class="text-xs text-muted mt-2">Код: <b style="font-family:monospace">${escapeHtmlSafe(data.code)}</b></div>
+          <div class="text-xs text-muted mt-2">
+            Ссылка для соцсетей: <code style="font-size:11px">${escapeHtmlSafe(link)}</code>
+          </div>
         </div>
 
         <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:10px;margin-top:16px">
