@@ -93,72 +93,163 @@ async function findByCode(serverId, codes) {
   }
 }
 
-async function findRelevantArticles(serverId, query) {
-  if (!serverId) return [];
-  const q = sanitizeQuery(query);
-  if (q.length < 3) return [];
+// Русские/общие стоп-слова, которые не несут смысла для поиска по законам
+const STOPWORDS = new Set([
+  'это','этот','эта','эти','тот','та','те','был','была','было','были','есть','быть',
+  'для','как','что','чтобы','или','но','при','над','под','без','через','если','когда',
+  'все','весь','вся','они','оно','она','мне','мой','моя','моё','твой','наш','ваш',
+  'про','уже','еще','ещё','же','ли','бы','не','нет','ни','да','же',
+  'после','перед','между','около','около','около','очень','можно','нужно','надо',
+  'the','and','for','was','are','this','that','with','from','have','has',
+]);
 
-  let semantic = [];
-  // 1. FULLTEXT (idx_fulltext on articles(title, text))
+// Из текста запроса берём «стемы» — первые N букв слова, чтобы LIKE ловил
+// все формы: «сбил» → стем «сби» → найдёт «сбил/сбила/сбили/сбит». Это
+// дешёвый и устойчивый суррогат морфологии для MySQL без ngram-парсера.
+function extractStems(text, { stemLen = 5, minWord = 3, maxKeywords = 10 } = {}) {
+  if (!text) return [];
+  const words = String(text)
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^a-zа-я0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= minWord && !STOPWORDS.has(w));
+  const stems = [];
+  const seen = new Set();
+  for (const w of words) {
+    const stem = w.length > stemLen ? w.slice(0, stemLen) : w;
+    if (seen.has(stem)) continue;
+    seen.add(stem);
+    stems.push(stem);
+    if (stems.length >= maxKeywords) break;
+  }
+  return stems;
+}
+
+// Ранжированный LIKE: вес 3 за совпадение в title, 1 за совпадение в text.
+// Возвращает топ-N статей с подсчётом скора.
+async function findByStems(serverId, stems, limit) {
+  if (!serverId || !stems.length) return [];
+  const titleWeights = stems.map(() => 'CASE WHEN a.title LIKE ? THEN 3 ELSE 0 END').join(' + ');
+  const textWeights = stems.map(() => 'CASE WHEN a.text  LIKE ? THEN 1 ELSE 0 END').join(' + ');
+  const orConds = stems.map(() => '(a.title LIKE ? OR a.text LIKE ?)').join(' OR ');
+  const params = [];
+  stems.forEach((s) => params.push('%' + s + '%')); // titleWeights
+  stems.forEach((s) => params.push('%' + s + '%')); // textWeights
+  params.push(serverId);
+  stems.forEach((s) => params.push('%' + s + '%', '%' + s + '%')); // orConds
+  params.push(limit);
   try {
-    semantic = await db.query(
+    return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName,
-              MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE) AS score
+              (${titleWeights} + ${textWeights}) AS score
          FROM articles a
          LEFT JOIN categories c ON c.id = a.category_id
-        WHERE a.server_id = ?
-          AND a.is_active = 1
-          AND MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE)
-        ORDER BY score DESC
+        WHERE a.server_id = ? AND a.is_active = 1 AND (${orConds})
+        ORDER BY score DESC, a.code ASC
         LIMIT ?`,
-      [q, serverId, q, MAX_ARTICLES_INJECT]
+      params
     );
   } catch (err) {
-    console.warn('[AI] FULLTEXT search failed, falling back to LIKE:', err.message);
+    console.warn('[AI] findByStems failed:', err.message);
+    return [];
   }
+}
 
-  // 2. Fallback: LIKE по топ-5 ключевым словам
-  if (!semantic || !semantic.length) {
-    const keywords = q.split(/\s+/).filter((w) => w.length > 3).slice(0, 5);
-    if (keywords.length) {
-      const conds = keywords.map(() => '(a.title LIKE ? OR a.text LIKE ?)').join(' OR ');
-      const params = [serverId];
-      keywords.forEach((k) => params.push('%' + k + '%', '%' + k + '%'));
-      params.push(MAX_ARTICLES_INJECT);
-      try {
-        semantic = await db.query(
-          `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
-                  c.short_name AS catShort, c.name AS catName
-             FROM articles a
-             LEFT JOIN categories c ON c.id = a.category_id
-            WHERE a.server_id = ? AND a.is_active = 1 AND (${conds})
-            LIMIT ?`,
-          params
-        );
-      } catch (err) {
-        console.warn('[AI] LIKE search failed:', err.message);
-      }
+// Страховочный fallback: если ничего не нашли — берём срез самых первых
+// статей по основным «законным» категориям этого сервера. Так AI ВСЕГДА
+// получает контекст и не уходит фантазировать.
+async function findFallback(serverId, limit) {
+  if (!serverId) return [];
+  try {
+    return await db.query(
+      `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+              c.short_name AS catShort, c.name AS catName
+         FROM articles a
+         LEFT JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ? AND a.is_active = 1
+          AND c.type IN ('laws','rules','other')
+        ORDER BY c.sort_order ASC, a.sort_order ASC, a.id ASC
+        LIMIT ?`,
+      [serverId, limit]
+    );
+  } catch (err) {
+    console.warn('[AI] findFallback failed:', err.message);
+    return [];
+  }
+}
+
+async function findRelevantArticles(serverId, query) {
+  if (!serverId) {
+    console.warn('[AI] RAG: no serverId, skip retrieval');
+    return [];
+  }
+  const q = sanitizeQuery(query);
+
+  // 1. FULLTEXT (idx_fulltext on articles(title, text)) — лучший случай, но
+  // на короткой/чисто-русской фразе может вернуть 0. Используем как «бонусные».
+  let ft = [];
+  if (q.length >= 3) {
+    try {
+      ft = await db.query(
+        `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
+                c.short_name AS catShort, c.name AS catName,
+                MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE) AS score
+           FROM articles a
+           LEFT JOIN categories c ON c.id = a.category_id
+          WHERE a.server_id = ?
+            AND a.is_active = 1
+            AND MATCH(a.title, a.text) AGAINST(? IN NATURAL LANGUAGE MODE)
+          ORDER BY score DESC
+          LIMIT ?`,
+        [q, serverId, q, MAX_ARTICLES_INJECT]
+      );
+    } catch (err) {
+      console.warn('[AI] FULLTEXT failed:', err.message);
     }
   }
-  semantic = semantic || [];
 
-  // 3. Прямой lookup по номерам статей, упомянутым в тексте.
-  // Эти статьи ставятся в начало списка с пометкой «упомянуто пользователем».
+  // 2. Стем-LIKE: гораздо лучше работает на склонениях русского
+  const stems = extractStems(query);
+  const stemHits = stems.length ? await findByStems(serverId, stems, MAX_ARTICLES_INJECT) : [];
+
+  // 3. Прямой lookup по упомянутым номерам статей («ст. 1.5», «264»)
   const mentionedCodes = extractMentionedCodes(query);
   const byCode = mentionedCodes.length ? await findByCode(serverId, mentionedCodes) : [];
 
-  // Сливаем без дубликатов: сначала byCode, затем semantic.
-  const seen = new Set(byCode.map((a) => `${a.catShort || ''}:${a.code}`));
-  for (const a of semantic) {
-    const k = `${a.catShort || ''}:${a.code}`;
-    if (!seen.has(k)) {
+  // Сливаем без дубликатов в порядке приоритета: прямые номера → стемы → FULLTEXT
+  const merged = [];
+  const seen = new Set();
+  const pushUnique = (rows) => {
+    for (const a of rows) {
+      const k = `${a.catShort || ''}:${a.code}`;
+      if (seen.has(k)) continue;
       seen.add(k);
-      byCode.push(a);
-      if (byCode.length >= MAX_ARTICLES_INJECT) break;
+      merged.push(a);
+      if (merged.length >= MAX_ARTICLES_INJECT) return true;
     }
+    return false;
+  };
+  if (pushUnique(byCode)) return logRag(serverId, query, merged, 'code+');
+  if (pushUnique(stemHits)) return logRag(serverId, query, merged, 'stems+');
+  if (pushUnique(ft)) return logRag(serverId, query, merged, 'fulltext+');
+
+  // 4. Страховка: пусто — даём общий срез статей сервера, чтобы AI имел контекст
+  if (merged.length === 0) {
+    const fb = await findFallback(serverId, MAX_ARTICLES_INJECT);
+    pushUnique(fb);
+    return logRag(serverId, query, merged, 'fallback');
   }
-  return byCode;
+  return logRag(serverId, query, merged, 'merged');
+}
+
+function logRag(serverId, query, articles, source) {
+  console.log(
+    `[AI] RAG server=${serverId} source=${source} returned=${articles.length} ` +
+    `query="${String(query || '').slice(0, 80).replace(/\s+/g, ' ')}"`
+  );
+  return articles;
 }
 
 function formatArticlesBlock(articles) {
