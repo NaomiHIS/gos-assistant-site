@@ -44,9 +44,10 @@ const ROLE_LABEL = {
 // RAG: ищем релевантные статьи в БД по тексту последнего сообщения
 // ============================================================
 const ARTICLE_CATS = ['УК', 'АК', 'ДК', 'ПК', 'УАК'];
-const MAX_ARTICLE_TEXT = 500; // символов на статью в prompt
-const MAX_ARTICLES_INJECT = 20;
-const MAX_CODE_LOOKUP = 8; // прямой lookup статей по упомянутому номеру
+const MAX_ARTICLE_TEXT = 500;       // символов на статью в детальном блоке
+const MAX_ARTICLES_INJECT = 30;     // топ-N с полным текстом
+const MAX_CODE_LOOKUP = 8;          // прямой lookup статей по упомянутому номеру
+const MAX_INDEX_ITEMS = 1500;       // верхняя граница полного индекса (защита от перегруза токенов)
 
 function sanitizeQuery(s) {
   return String(s || '')
@@ -184,6 +185,57 @@ async function findFallback(serverId, limit) {
     console.warn('[AI] findFallback failed:', err.message);
     return [];
   }
+}
+
+// Полный индекс всех статей сервера: только идентификатор + название,
+// без текста. Для 1500 статей ≈ 30k токенов — спокойно влезает в современные модели.
+// AI использует его как «оглавление БД», чтобы знать о статьях, которые не попали
+// в детальную выборку RAG.
+async function fetchServerArticleIndex(serverId) {
+  if (!serverId) return [];
+  try {
+    return await db.query(
+      `SELECT a.code, a.title, c.short_name AS catShort, c.sort_order AS catSort,
+              c.type AS catType, a.sort_order AS articleSort
+         FROM articles a
+         LEFT JOIN categories c ON c.id = a.category_id
+        WHERE a.server_id = ? AND a.is_active = 1
+        ORDER BY (c.type = 'laws') DESC, c.sort_order ASC, a.sort_order ASC, a.id ASC
+        LIMIT ${MAX_INDEX_ITEMS}`,
+      [serverId]
+    );
+  } catch (err) {
+    console.warn('[AI] fetchServerArticleIndex failed:', err.message);
+    return [];
+  }
+}
+
+// Форматируем индекс компактно, группируя по категории.
+function formatArticleIndex(rows, totalInDb) {
+  if (!rows || !rows.length) return '';
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.catShort || '—';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const truncated = rows.length >= MAX_INDEX_ITEMS && totalInDb > MAX_INDEX_ITEMS;
+  const lines = [
+    '',
+    `=== ПОЛНЫЙ ИНДЕКС СТАТЕЙ СЕРВЕРА (${rows.length}${truncated ? ' из ' + totalInDb : ''} шт.) ===`,
+    'Это ИСЧЕРПЫВАЮЩИЙ список всех статей сервера. Каждая строка — реальная статья в БД.',
+    'Используй индекс как ОГЛАВЛЕНИЕ: найди подходящие по названию, потом смотри детальный блок ниже.',
+    'Если в детальном блоке нет нужной, но в этом индексе она есть — упомяни её идентификатор и название, и предложи юзеру открыть её в окне поиска приложения.',
+    '',
+  ];
+  for (const [cat, arr] of groups) {
+    lines.push(`— ${cat} (${arr.length} шт.):`);
+    for (const a of arr) {
+      const title = String(a.title || '').replace(/\s+/g, ' ').slice(0, 100);
+      lines.push(`  [${cat} ст. ${a.code}] ${title}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 // Диагностика: сколько вообще активных/неактивных статей на этом server_id.
@@ -379,12 +431,21 @@ function buildSystemPrompt(role, context) {
     'Ты — AI-ассистент по законам и правилам ролевых серверов Majestic RP (GTA 5). Это ИГРОВОЙ ВЫМЫШЛЕННЫЙ свод правил, не путать с законодательством РФ.',
     '',
     '⛔ ЖЁСТКИЕ ПРАВИЛА РАБОТЫ СО СТАТЬЯМИ — нарушение недопустимо:',
-    '1. Используй ИСКЛЮЧИТЕЛЬНО статьи из раздела «БАЗА СТАТЕЙ ЭТОГО СЕРВЕРА» в этом промпте. Никакие другие.',
-    '2. Полностью забудь номера статей реального УК/АК РФ — на сервере СВОЯ нумерация, не совпадающая с реальной.',
-    '3. Идентификатор статьи в формате [КОДЕКС ст. НОМЕР] копируй ПОСИМВОЛЬНО из квадратных скобок предоставленного списка. Не сокращай, не округляй, не "близко-похожий" номер.',
-    '4. ВНИМАТЕЛЬНО прочитай ВСЕ статьи из БАЗЫ перед ответом. Это релевантная выборка — почти всегда там есть подходящее, нужно лишь сопоставить ситуацию. Если идеальной нет — обязательно укажи отдалённо подходящие с пометкой «вероятно применима, уточните в окне поиска приложения». ЗАПРЕЩЕНО отвечать «статьи не нашёл» если в БАЗЕ есть хоть что-то по теме.',
-    '5. Скажи «Подходящей статьи в базе сервера не нашёл» ТОЛЬКО если БАЗА полностью пустая ИЛИ если все статьи там говорят о совершенно других вещах (например юзер спросил про парковку, а в БАЗЕ только про оружие).',
-    '6. У серверов есть кодексы: УК (Уголовный), АК (Административный), ДК (Должностной), ПК (Полицейский), УАК (синоним УК). При цитировании используй именно тот префикс, который указан в идентификаторе статьи.',
+    '',
+    'В промпте ниже два блока с данными:',
+    '— «ПОЛНЫЙ ИНДЕКС СТАТЕЙ СЕРВЕРА» — ВСЕ статьи сервера (только идентификатор + название). Это исчерпывающий каталог.',
+    '— «БАЗА СТАТЕЙ ЭТОГО СЕРВЕРА (релевантная выборка)» — топ статей по запросу, с полным текстом и штрафами.',
+    '',
+    'Алгоритм поиска нужной статьи:',
+    '1. Сначала прочти ИНДЕКС и найди статьи, чьи названия подходят к ситуации юзера. Их может быть 1–5 штук.',
+    '2. Если эти статьи есть в ДЕТАЛЬНОЙ ВЫБОРКЕ — бери полный текст оттуда, цитируй с штрафом/звёздами.',
+    '3. Если в ДЕТАЛЬНОЙ ВЫБОРКЕ их нет, но в ИНДЕКСЕ есть — назови идентификатор и название из индекса, и предложи юзеру открыть статью в окне поиска приложения для полного текста.',
+    '',
+    'Жёсткие ограничения:',
+    '— Используй ТОЛЬКО статьи, идентификатор которых явно присутствует в одном из этих двух блоков. НИКАКИЕ номера из головы или из реального УК/АК РФ.',
+    '— Идентификатор копируй посимвольно: формат [КОДЕКС ст. НОМЕР].',
+    '— У серверов есть кодексы: УК (Уголовный), АК (Административный), ДК (Должностной), ПК (Полицейский), УАК (синоним УК). Префикс бери из идентификатора, не подменяй.',
+    '— Если в ИНДЕКСЕ нет НИ ОДНОЙ статьи, подходящей даже отдалённо — скажи «Подходящей статьи в базе сервера не нашёл, уточни ситуацию или открой поиск в приложении». Только в этом случае.',
     '',
     'Формат ответа:',
     '— Если ссылаешься на статью, обязательно дай: точный идентификатор из списка, краткую формулировку нарушения, и (если есть в данных) штраф / звёзды розыска / срок.',
@@ -515,8 +576,9 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
   // Диагностика — всегда видна в Railway-логах: что реально лежит в БД
   // для этого serverId. Если total=0 — проблема в slug или импорте.
   // Если active=0 при ненулевом total — RAG их не увидит (выбирает is_active=1).
+  let diag = null;
   if (serverId) {
-    const diag = await diagServerArticles(serverId);
+    diag = await diagServerArticles(serverId);
     if (!diag || Number(diag.total) === 0) {
       console.warn(`[AI] DIAG server=${serverId}: 0 articles. Возможно неверный slug или статьи не импортированы.`);
     } else {
@@ -529,10 +591,19 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
   const relevant = lastUser ? await findRelevantArticles(serverId, lastUser.content) : [];
   const articlesBlock = formatArticlesBlock(relevant);
 
+  // Полный индекс всех статей сервера — AI видит всё «оглавление БД»,
+  // а не только 30 отобранных RAG. Это критично против ответов «такой статьи нет».
+  const indexRows = serverId ? await fetchServerArticleIndex(serverId) : [];
+  const totalActiveInDb = (diag && Number(diag.active)) || indexRows.length;
+  const indexBlock = formatArticleIndex(indexRows, totalActiveInDb);
+  if (indexRows.length) {
+    console.log(`[AI] INDEX server=${serverId} injected=${indexRows.length}/${totalActiveInDb}`);
+  }
+
   const baseSystem = buildSystemPrompt(persona, context);
   const systemMsg = {
     role: 'system',
-    content: articlesBlock ? baseSystem + '\n' + articlesBlock : baseSystem,
+    content: [baseSystem, indexBlock, articlesBlock].filter(Boolean).join('\n'),
   };
 
   const url = AI_BASE_URL + '/chat/completions';
