@@ -292,6 +292,31 @@ async function runMigrations() {
       ) ENGINE=InnoDB
     `);
     console.log('[InitDB] ✓ support tables ensured');
+
+    // ============================================================
+    // Referrals: реферальные коды + журнал приведённых пользователей
+    // ============================================================
+    await ensureColumn('users', 'referral_code', 'VARCHAR(16) NULL UNIQUE');
+    await ensureColumn('users', 'referred_by_user_id', 'INT NULL');
+    await ensureColumn('users', 'registration_ip', 'VARCHAR(45) NULL');
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS referrals (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        referrer_user_id INT NOT NULL,
+        referee_user_id INT NOT NULL UNIQUE,
+        referee_ip VARCHAR(45) NULL,
+        referee_user_agent VARCHAR(255) NULL,
+        status ENUM('granted','blocked') NOT NULL DEFAULT 'granted',
+        block_reason VARCHAR(64) NULL,
+        referrer_reward_days INT NOT NULL DEFAULT 0,
+        referee_reward_days INT NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_referrer (referrer_user_id, created_at),
+        INDEX idx_referee_ip (referee_ip, created_at)
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] ✓ referrals ensured');
   } catch (err) {
     console.warn('[InitDB] migration warning:', err.message);
   }

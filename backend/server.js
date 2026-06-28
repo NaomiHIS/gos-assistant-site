@@ -49,6 +49,7 @@ app.use('/api/ai', require('./routes/ai'));
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/contacts', require('./routes/contacts'));
 app.use('/api/notes', require('./routes/notes'));
+app.use('/api/referrals', require('./routes/referrals'));
 
 // Health check
 app.get('/api/health', async (req, res) => {

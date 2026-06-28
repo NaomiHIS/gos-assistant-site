@@ -12,6 +12,27 @@
   const switchText = $('switch-text');
   const switchLink = $('switch-link');
 
+  // Capture referral code from URL ?ref= and remember across switches/redirects.
+  // Sticky: даже если юзер сначала ушёл на login и вернулся — код остаётся.
+  const refFromUrl = new URLSearchParams(location.search).get('ref');
+  if (refFromUrl) {
+    const clean = refFromUrl.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 16);
+    if (clean) sessionStorage.setItem('gos_ref_code', clean);
+  }
+  function getStickyRef() {
+    return sessionStorage.getItem('gos_ref_code') || '';
+  }
+  function renderRefBanner() {
+    const code = getStickyRef();
+    const banner = $('ref-banner');
+    if (!banner) return;
+    if (!code) { banner.classList.add('hidden'); return; }
+    banner.classList.remove('hidden');
+    const codeEl = $('ref-banner-code');
+    if (codeEl) codeEl.textContent = code;
+  }
+  renderRefBanner();
+
   // Check ?mode=register or ?token (Discord callback) or ?error=...
   const params = new URLSearchParams(location.search);
   const token = params.get('token');
@@ -48,6 +69,7 @@
   function setMode(newMode) {
     mode = newMode;
     clearMessages();
+    const refBanner = $('ref-banner');
     if (mode === 'login') {
       loginForm.classList.remove('hidden');
       registerForm.classList.add('hidden');
@@ -55,6 +77,7 @@
       formSubtitle.textContent = 'Войдите, чтобы продолжить';
       switchText.textContent = 'Нет аккаунта?';
       switchLink.textContent = 'Зарегистрироваться';
+      if (refBanner) refBanner.classList.add('hidden'); // баннер только на регистрации
     } else {
       loginForm.classList.add('hidden');
       registerForm.classList.remove('hidden');
@@ -62,6 +85,7 @@
       formSubtitle.textContent = 'Зарегистрируйтесь, чтобы получить доступ';
       switchText.textContent = 'Уже есть аккаунт?';
       switchLink.textContent = 'Войти';
+      if (refBanner && getStickyRef()) refBanner.classList.remove('hidden');
     }
   }
 
@@ -167,11 +191,21 @@
     btn.textContent = 'Создание...';
 
     try {
-      const data = await window.GosClient.auth.register(email, username, password, acceptTerms, serverId);
+      const referralCode = getStickyRef();
+      const data = await window.GosClient.auth.register(email, username, password, acceptTerms, serverId, referralCode);
       if (data.success) {
         window.GosClient.setToken(data.token);
         window.GosClient.setUser(data.user);
-        showSuccess('Аккаунт создан! Перенаправление...');
+        // Очищаем код только при успехе — иначе при ошибке (например email занят)
+        // юзер мог бы потерять реферал.
+        sessionStorage.removeItem('gos_ref_code');
+        let msg = 'Аккаунт создан! Перенаправление...';
+        if (data.referral && data.referral.granted) {
+          msg = '🎁 Аккаунт создан + бонус Lite 7 дней. Перенаправление...';
+        } else if (data.referral && data.referral.blocked) {
+          msg = 'Аккаунт создан (реферальный бонус не выдан, причина проверки безопасности). Перенаправление...';
+        }
+        showSuccess(msg);
         setTimeout(() => redirectAfterAuth(data.user), 600);
       } else {
         showError(data.error || 'Ошибка регистрации');

@@ -77,8 +77,8 @@
 
     auth: {
       login: (email, password) => request('POST', '/auth/login', { email, password }),
-      register: (email, username, password, acceptTerms, serverId) =>
-        request('POST', '/auth/register', { email, username, password, acceptTerms, serverId }),
+      register: (email, username, password, acceptTerms, serverId, referralCode) =>
+        request('POST', '/auth/register', { email, username, password, acceptTerms, serverId, referralCode: referralCode || null }),
       me: () => request('GET', '/auth/me'),
       logout: () => request('POST', '/auth/logout'),
       logoutAll: () => request('POST', '/auth/logout-all'),
@@ -179,6 +179,10 @@
       extend: (id, days) => request('POST', '/subscriptions/grants/' + id + '/extend', { days }),
       updateGrant: (id, data) => request('PUT', '/subscriptions/grants/' + id, data),
       revoke: (id) => request('DELETE', '/subscriptions/grants/' + id),
+    },
+
+    referrals: {
+      me: () => request('GET', '/referrals/me'),
     },
 
     payments: {

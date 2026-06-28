@@ -43,9 +43,92 @@
     await loadData();
     refreshSupportBadge();
     loadSubscription();
+    loadReferral();
     handleDiscordReturnParams();
     handlePaymentReturn();
   }
+
+  // ============================================================
+  // Реферальная программа
+  // ============================================================
+  async function loadReferral() {
+    const el = document.getElementById('referral-content');
+    if (!el) return;
+    try {
+      const data = await window.GosClient.referrals.me();
+      if (!data.success) throw new Error(data.error || 'Не удалось загрузить');
+      const link = location.origin + '/login.html?mode=register&ref=' + encodeURIComponent(data.code);
+      const s = data.stats || {};
+      el.innerHTML = `
+        <div class="text-sm" style="line-height:1.6;margin-bottom:14px">${escapeHtmlSafe(data.programDescription || '')}</div>
+
+        <div class="input-group">
+          <label class="input-label">Ваша реферальная ссылка</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="text" class="input" id="ref-link" value="${escapeHtmlAttr(link)}" readonly style="flex:1;font-family:monospace;font-size:13px" />
+            <button class="btn btn-primary" id="btn-copy-ref" style="white-space:nowrap">Копировать</button>
+          </div>
+          <div class="text-xs text-muted mt-2">Код: <b style="font-family:monospace">${escapeHtmlSafe(data.code)}</b></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(120px, 1fr));gap:10px;margin-top:16px">
+          <div style="background:var(--bg-secondary);padding:12px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:700">${s.granted || 0}</div>
+            <div class="text-xs text-muted">Приведено</div>
+          </div>
+          <div style="background:var(--bg-secondary);padding:12px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--accent-primary)">+${s.totalDays || 0} дн.</div>
+            <div class="text-xs text-muted">Премиум-бонус</div>
+          </div>
+          ${(s.blocked || 0) > 0 ? `
+          <div style="background:var(--bg-secondary);padding:12px;border-radius:8px;text-align:center">
+            <div style="font-size:22px;font-weight:700;color:var(--danger)">${s.blocked}</div>
+            <div class="text-xs text-muted">Заблокировано</div>
+          </div>` : ''}
+        </div>
+
+        ${(data.referrals && data.referrals.length) ? `
+          <div style="margin-top:18px">
+            <div class="text-xs text-muted" style="text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Последние приглашённые</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              ${data.referrals.slice(0, 10).map((r) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-secondary);border-radius:6px;font-size:13px">
+                  <span>${escapeHtmlSafe(r.refereeName || r.refereeEmail || '—')}</span>
+                  <span class="text-xs ${r.status === 'granted' ? 'text-muted' : ''}" style="${r.status === 'blocked' ? 'color:var(--danger)' : ''}">
+                    ${r.status === 'granted' ? '+' + (r.rewardDays || 0) + ' дн.' : 'заблокирован'}
+                    · ${new Date(r.createdAt).toLocaleDateString('ru-RU')}
+                  </span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      `;
+      const copyBtn = document.getElementById('btn-copy-ref');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+          const inp = document.getElementById('ref-link');
+          if (!inp) return;
+          inp.select();
+          try {
+            navigator.clipboard.writeText(inp.value);
+            copyBtn.textContent = 'Скопировано';
+            setTimeout(() => { copyBtn.textContent = 'Копировать'; }, 1500);
+          } catch (_) {
+            document.execCommand('copy');
+          }
+        });
+      }
+    } catch (err) {
+      el.innerHTML = `<div class="text-sm" style="color:var(--danger)">Не удалось загрузить реферальную программу: ${escapeHtmlSafe(err.message)}</div>`;
+    }
+  }
+  function escapeHtmlSafe(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function escapeHtmlAttr(s) { return escapeHtmlSafe(s); }
 
   // ============================================================
   // Возврат из платёжного провайдера: страховка от потерянного webhook'а.

@@ -434,7 +434,43 @@ async function grantSubscription({ userId, planId, durationDays, expiresAt, gran
   return result.insertId;
 }
 
+// ============================================================
+// extendOrGrantBySlug — для бонусов (реферальная программа и т.п.).
+// Если у юзера уже активна подписка с этим plan-slug → ПРОДЛЕВАЕТ её на days
+// от max(now, expires_at), сохраняя ту же запись. Если активна другая —
+// заменяет на новую с длительностью days. Если подписки нет — создаёт новую.
+// ============================================================
+async function extendOrGrantBySlug({ userId, planSlug, days, grantedBy, notes }) {
+  const plan = await db.queryOne('SELECT id, slug FROM subscription_plans WHERE slug = ? AND is_active = 1', [planSlug]);
+  if (!plan) throw new Error('Plan ' + planSlug + ' not found or inactive');
+  const addMs = Math.max(1, parseInt(days, 10) || 1) * 24 * 60 * 60 * 1000;
+
+  const current = await db.queryOne(
+    `SELECT id, plan_id, expires_at FROM user_subscriptions
+      WHERE user_id = ? AND is_active = 1
+      ORDER BY expires_at DESC LIMIT 1`,
+    [userId]
+  );
+
+  if (current && current.plan_id === plan.id) {
+    const base = current.expires_at ? new Date(current.expires_at) : new Date();
+    const newExpires = new Date(Math.max(base.getTime(), Date.now()) + addMs);
+    const sql = newExpires.toISOString().slice(0, 19).replace('T', ' ');
+    await db.query(
+      `UPDATE user_subscriptions SET expires_at = ?, notes = CONCAT_WS(' | ', notes, ?) WHERE id = ?`,
+      [sql, notes ? String(notes).slice(0, 200) : null, current.id]
+    );
+    return current.id;
+  }
+  // Иначе — обычная выдача (revoke старой + insert новой).
+  return grantSubscription({
+    userId, planId: plan.id, durationDays: Math.ceil(addMs / 86400000),
+    grantedBy, notes,
+  });
+}
+
 module.exports = router;
 module.exports.loadCurrentSubscription = loadCurrentSubscription;
 module.exports.grantSubscription = grantSubscription;
+module.exports.extendOrGrantBySlug = extendOrGrantBySlug;
 module.exports.KNOWN_FEATURES = KNOWN_FEATURES;

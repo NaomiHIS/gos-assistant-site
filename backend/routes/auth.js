@@ -115,7 +115,7 @@ async function exchangeCodeForUser(code) {
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, username, password, acceptTerms, serverId } = req.body || {};
+    const { email, username, password, acceptTerms, serverId, referralCode } = req.body || {};
     if (!email || !username || !password) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
@@ -147,16 +147,29 @@ router.post('/register', async (req, res) => {
     }
 
     const hash = await bcrypt.hash(password, 10);
+    const { processReferral, extractIp } = require('./referrals');
+    const regIp = extractIp(req);
     const result = await db.query(
-      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id)
-       VALUES (?, ?, ?, ?, NOW(), ?, ?)`,
-      [email, username, hash, 'user', TERMS_VERSION, serverId]
+      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id, registration_ip)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)`,
+      [email, username, hash, 'user', TERMS_VERSION, serverId, regIp || null]
     );
+
+    // Реферальная программа — тихая обработка, не должна ломать регистрацию
+    let referralResult = null;
+    if (referralCode) {
+      referralResult = await processReferral({
+        referralCode,
+        newUserId: result.insertId,
+        ip: regIp,
+        userAgent: req.headers['user-agent'] || '',
+      });
+    }
 
     const user = await db.queryOne('SELECT * FROM users WHERE id = ?', [result.insertId]);
     const token = signToken(user);
 
-    res.json({ success: true, token, user: userPublic(user) });
+    res.json({ success: true, token, user: userPublic(user), referral: referralResult });
   } catch (err) {
     console.error('Register error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
