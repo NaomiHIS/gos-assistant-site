@@ -114,6 +114,13 @@
   });
 
   function redirectAfterAuth(user) {
+    // Если был передан ?redirect= — возвращаем юзера именно туда (только
+    // внутренние пути, чтобы не превратить логин в open-redirect для фишинга).
+    const ret = new URLSearchParams(location.search).get('redirect');
+    if (ret && ret.startsWith('/') && !ret.startsWith('//')) {
+      location.href = ret;
+      return;
+    }
     if (user && user.role === 'admin') {
       location.href = '/admin.html';
     } else {

@@ -14,14 +14,17 @@
   // ============================================================
   async function init() {
     const token = window.GosClient.getToken();
+    // Сохраняем куда юзер хотел попасть (например /cabinet.html#download) —
+    // login.html прочитает ?redirect= и вернёт после успешного входа.
+    const returnTo = location.pathname + location.search + location.hash;
     if (!token) {
-      location.href = '/login.html';
+      location.href = '/login.html?redirect=' + encodeURIComponent(returnTo);
       return;
     }
     try {
       const me = await window.GosClient.auth.me();
       if (!me.success) {
-        location.href = '/login.html';
+        location.href = '/login.html?redirect=' + encodeURIComponent(returnTo);
         return;
       }
       State.user = me.user;
@@ -202,18 +205,39 @@
   // ============================================================
   // Tabs
   // ============================================================
+  function switchTab(tab) {
+    const btn = document.querySelector(`.cabinet-tab[data-tab="${tab}"]`);
+    if (!btn) return false;
+    document.querySelectorAll('.cabinet-tab').forEach((b) => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.cabinet-panel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.panel === tab);
+      p.classList.toggle('hidden', p.dataset.panel !== tab);
+    });
+    if (tab === 'support') loadTickets();
+    return true;
+  }
+
   function setupTabs() {
     document.querySelectorAll('.cabinet-tab').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
-        document.querySelectorAll('.cabinet-tab').forEach((b) => b.classList.toggle('active', b === btn));
-        document.querySelectorAll('.cabinet-panel').forEach((p) => {
-          p.classList.toggle('active', p.dataset.panel === tab);
-          p.classList.toggle('hidden', p.dataset.panel !== tab);
-        });
-        if (tab === 'support') loadTickets();
-      });
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
+    // Хеш-роутинг: /cabinet.html#download → переключение на вкладку «Приложение».
+    // Работает на первой загрузке и при изменении хеша через history-навигацию.
+    const TAB_ALIASES = {
+      download: 'download', downloads: 'download', app: 'download', application: 'download',
+      profile: 'profile',
+      security: 'security',
+      data: 'data',
+      support: 'support',
+    };
+    function applyHash() {
+      const key = (location.hash || '').replace(/^#/, '').toLowerCase().split('?')[0];
+      if (!key) return;
+      const target = TAB_ALIASES[key];
+      if (target) switchTab(target);
+    }
+    applyHash();
+    window.addEventListener('hashchange', applyHash);
   }
 
   // ============================================================
