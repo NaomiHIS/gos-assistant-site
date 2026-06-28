@@ -78,12 +78,14 @@ async function findByCode(serverId, codes) {
   if (!serverId || !codes.length) return [];
   const placeholders = codes.map(() => '?').join(',');
   try {
+    // is_active НЕ фильтруем — если юзер явно ссылается на номер статьи,
+    // показываем её AI даже если временно деактивирована.
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName
          FROM articles a
          LEFT JOIN categories c ON c.id = a.category_id
-        WHERE a.server_id = ? AND a.is_active = 1 AND a.code IN (${placeholders})
+        WHERE a.server_id = ? AND a.code IN (${placeholders})
         LIMIT ?`,
       [serverId, ...codes, MAX_CODE_LOOKUP]
     );
@@ -162,21 +164,45 @@ async function findByStems(serverId, stems, limit) {
 // получает контекст и не уходит фантазировать.
 async function findFallback(serverId, limit) {
   if (!serverId) return [];
+  // Слабый фильтр: только server_id. Без is_active, без типа категории.
+  // Это финальная страховка — лучше дать AI странные/неактивные статьи,
+  // чем пустой контекст (тогда он выдумывает номера).
   try {
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName
          FROM articles a
          LEFT JOIN categories c ON c.id = a.category_id
-        WHERE a.server_id = ? AND a.is_active = 1
-          AND c.type IN ('laws','rules','other')
-        ORDER BY c.sort_order ASC, a.sort_order ASC, a.id ASC
+        WHERE a.server_id = ?
+        ORDER BY (a.is_active = 1) DESC, c.sort_order ASC, a.sort_order ASC, a.id ASC
         LIMIT ?`,
       [serverId, limit]
     );
   } catch (err) {
     console.warn('[AI] findFallback failed:', err.message);
     return [];
+  }
+}
+
+// Диагностика: сколько вообще активных/неактивных статей на этом server_id.
+// Вызывается в начале каждого chat-запроса, лог идёт в Railway → видно,
+// если фронт шлёт неправильный serverId, или is_active=0 у всех статей.
+async function diagServerArticles(serverId) {
+  if (!serverId) return null;
+  try {
+    const row = await db.queryOne(
+      `SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) AS active,
+         SUM(CASE WHEN is_active = 0 OR is_active IS NULL THEN 1 ELSE 0 END) AS inactive,
+         COUNT(DISTINCT category_id) AS categories
+       FROM articles WHERE server_id = ?`,
+      [serverId]
+    );
+    return row || null;
+  } catch (err) {
+    console.warn('[AI] diagServerArticles failed:', err.message);
+    return null;
   }
 }
 
@@ -482,6 +508,18 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
   }
 
   const context = await buildServerContext(serverId);
+
+  // Диагностика — всегда видна в Railway-логах: что реально лежит в БД
+  // для этого serverId. Если total=0 — проблема в slug или импорте.
+  // Если active=0 при ненулевом total — RAG их не увидит (выбирает is_active=1).
+  if (serverId) {
+    const diag = await diagServerArticles(serverId);
+    if (!diag || Number(diag.total) === 0) {
+      console.warn(`[AI] DIAG server=${serverId}: 0 articles. Возможно неверный slug или статьи не импортированы.`);
+    } else {
+      console.log(`[AI] DIAG server=${serverId}: total=${diag.total} active=${diag.active} inactive=${diag.inactive} categories=${diag.categories}`);
+    }
+  }
 
   // RAG: тянем статьи под последний пользовательский вопрос
   const lastUser = [...cleaned].reverse().find((m) => m.role === 'user');
