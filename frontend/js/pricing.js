@@ -20,12 +20,25 @@
       .replace(/'/g, '&#39;');
   }
 
+  function currencySymbol(currency) {
+    return currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₽';
+  }
+
   function formatPrice(cents, currency) {
     const rub = Math.floor(cents / 100);
     const kop = cents % 100;
-    const ccy = currency === 'USD' ? '$' : currency === 'EUR' ? '€' : '₽';
+    const ccy = currencySymbol(currency);
     if (kop) return rub + ',' + String(kop).padStart(2, '0') + ' ' + ccy;
     return rub + ' ' + ccy;
+  }
+
+  // Стоимость за день, формат «8,4 ₽» / «10 ₽» — копейки округляем до 1 знака
+  function formatPerDay(cents, days, currency) {
+    if (!days || days < 1) return '';
+    const perDay = cents / 100 / days;
+    const rounded = perDay >= 10 ? Math.round(perDay) : Math.round(perDay * 10) / 10;
+    const str = String(rounded).replace('.', ',');
+    return str + ' ' + currencySymbol(currency);
   }
 
   function dayWord(n) {
@@ -34,6 +47,20 @@
     if (b > 1 && b < 5) return 'дня';
     if (b === 1) return 'день';
     return 'дней';
+  }
+
+  // Делит планы на группы: lite, premium, yearly (Premium-годовые).
+  // Эвристика — по slug/name (без миграций БД). 180+ дней → отдельная плашка.
+  const YEARLY_DAYS_THRESHOLD = 180;
+  function groupOf(plan) {
+    const days = Number(plan.durationDays) || 0;
+    const haystack = ((plan.slug || '') + ' ' + (plan.name || '')).toLowerCase();
+    const isPremium = haystack.includes('premium') || haystack.includes('премиум');
+    const isLite = haystack.includes('lite') || haystack.includes('лайт');
+    if (isPremium && days >= YEARLY_DAYS_THRESHOLD) return 'yearly';
+    if (isPremium) return 'premium';
+    if (isLite) return 'lite';
+    return 'other';
   }
 
   function applyAuthVisibility() {
@@ -73,32 +100,122 @@
     multi_server: 'Просмотр законов всех серверов',
   };
 
+  // Распределяет планы по группам и для каждой считает min ₽/день и базовую ₽/день
+  // (от которой считается скидка). Возвращает {lite, premium, yearly, other}.
+  function buildGroups(plans) {
+    const groups = { lite: [], premium: [], yearly: [], other: [] };
+    plans.forEach((p) => groups[groupOf(p)].push(p));
+    Object.keys(groups).forEach((key) => {
+      groups[key].sort((a, b) => (a.durationDays || 0) - (b.durationDays || 0));
+    });
+    return groups;
+  }
+
+  function renderPlanCard(plan, ctx) {
+    const features = (plan.features || []).map((key) =>
+      `<li><span class="check">✓</span> ${escapeHtml(FEATURE_LABELS[key] || key)}</li>`
+    ).join('');
+    const accent = plan.color || '#DF005B';
+    const perDay = formatPerDay(plan.priceCents, plan.durationDays, plan.currency);
+    const perDayValue = (plan.priceCents / 100) / (plan.durationDays || 1);
+    const isBest = ctx.bestPlanId === plan.id;
+    const discount = ctx.baselinePerDay > 0
+      ? Math.round((1 - perDayValue / ctx.baselinePerDay) * 100)
+      : 0;
+    const trialNote = plan.durationDays && plan.durationDays <= 7 ? 'попробовать' : '';
+
+    const perDayParts = [];
+    if (perDay) perDayParts.push(perDay + ' / день');
+    if (discount > 0) perDayParts.push(`<span class="pricing-card-discount">−${discount}%</span>`);
+    else if (trialNote) perDayParts.push(trialNote);
+    const perDayLine = perDayParts.length
+      ? `<div class="pricing-card-perday">${perDayParts.join(' · ')}</div>`
+      : '';
+
+    return `
+      <div class="pricing-card ${isBest ? 'pricing-card-best' : ''}" style="--card-accent:${escapeHtml(accent)}">
+        ${isBest ? '<div class="pricing-card-badge pricing-card-badge-best">Лучшая цена</div>' : ''}
+        <div class="pricing-card-name">${escapeHtml(plan.name)}</div>
+        <div class="pricing-card-price">
+          <span class="price-value">${formatPrice(plan.priceCents, plan.currency)}</span>
+          <span class="price-period">/ ${plan.durationDays} ${dayWord(plan.durationDays)}</span>
+        </div>
+        ${perDayLine}
+        ${plan.description ? `<div class="pricing-card-desc">${escapeHtml(plan.description)}</div>` : ''}
+        <ul class="pricing-card-features">${features}</ul>
+        <button class="btn btn-primary btn-block pricing-card-buy" data-plan-id="${plan.id}">Купить</button>
+      </div>
+    `;
+  }
+
+  function renderGroupSection(title, plans, options) {
+    if (!plans.length) return '';
+    // Базовая ₽/день — самая дорогая в группе (от неё считаем скидку). Min — «Лучшая цена».
+    const perDays = plans.map((p) => (p.priceCents / 100) / (p.durationDays || 1));
+    const baselinePerDay = Math.max(...perDays);
+    const minPerDay = Math.min(...perDays);
+    const bestPlan = plans.length > 1 ? plans.find((p, i) => perDays[i] === minPerDay) : null;
+    const ctx = { baselinePerDay, bestPlanId: bestPlan ? bestPlan.id : null };
+    const chips = (options && options.chip)
+      ? `<span class="pricing-group-chip">${escapeHtml(options.chip)}</span>`
+      : '';
+    return `
+      <div class="pricing-group">
+        <div class="pricing-group-header">
+          <span class="pricing-group-title">${escapeHtml(title)}</span>
+          ${chips}
+        </div>
+        <div class="pricing-cards-grid">
+          ${plans.map((p) => renderPlanCard(p, ctx)).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderYearlySection(plans) {
+    if (!plans.length) return '';
+    // Базовая для расчёта экономии — самая дорогая ₽/день среди ВСЕХ Premium-планов (включая обычные).
+    // Если обычных Premium нет — просто скрываем скидку.
+    const premiumPlans = State.plans.filter((p) => groupOf(p) === 'premium');
+    let baselinePerDay = 0;
+    if (premiumPlans.length) {
+      baselinePerDay = Math.max(...premiumPlans.map((p) => (p.priceCents / 100) / (p.durationDays || 1)));
+    }
+    return plans.map((plan) => {
+      const perDay = formatPerDay(plan.priceCents, plan.durationDays, plan.currency);
+      const perDayValue = (plan.priceCents / 100) / (plan.durationDays || 1);
+      const discount = baselinePerDay > 0
+        ? Math.round((1 - perDayValue / baselinePerDay) * 100)
+        : 0;
+      const metaParts = [formatPrice(plan.priceCents, plan.currency)];
+      if (perDay) metaParts.push(perDay + ' / день');
+      if (discount > 0) metaParts.push(`экономия ${discount}%`);
+      const accent = plan.color || '#7C3AED';
+      return `
+        <div class="pricing-yearly" style="--card-accent:${escapeHtml(accent)}">
+          <div class="pricing-yearly-info">
+            <div class="pricing-yearly-name">👑 ${escapeHtml(plan.name)} · ${plan.durationDays} ${dayWord(plan.durationDays)}</div>
+            <div class="pricing-yearly-meta">${metaParts.join(' · ')}</div>
+          </div>
+          <button class="btn btn-secondary pricing-card-buy" data-plan-id="${plan.id}">Подробнее →</button>
+        </div>
+      `;
+    }).join('');
+  }
+
   function renderPlans() {
     const cont = $('pricing-cards');
     if (!State.plans.length) {
       cont.innerHTML = `<div class="text-sm text-muted" style="grid-column:1/-1;text-align:center;padding:40px 0">Тарифы пока недоступны.</div>`;
       return;
     }
-    cont.innerHTML = State.plans.map((plan) => {
-      const features = (plan.features || []).map((key) =>
-        `<li><span class="check">✓</span> ${escapeHtml(FEATURE_LABELS[key] || key)}</li>`
-      ).join('');
-      const accent = plan.color || '#DF005B';
-      const isPopular = plan.slug === 'premium';
-      return `
-        <div class="pricing-card ${isPopular ? 'pricing-card-popular' : ''}" style="--card-accent:${escapeHtml(accent)}">
-          ${isPopular ? '<div class="pricing-card-badge">Популярный</div>' : ''}
-          <div class="pricing-card-name">${escapeHtml(plan.name)}</div>
-          <div class="pricing-card-price">
-            <span class="price-value">${formatPrice(plan.priceCents, plan.currency)}</span>
-            <span class="price-period">/ ${plan.durationDays} ${dayWord(plan.durationDays)}</span>
-          </div>
-          ${plan.description ? `<div class="pricing-card-desc">${escapeHtml(plan.description)}</div>` : ''}
-          <ul class="pricing-card-features">${features}</ul>
-          <button class="btn btn-primary btn-block pricing-card-buy" data-plan-id="${plan.id}">Купить</button>
-        </div>
-      `;
-    }).join('');
+    const groups = buildGroups(State.plans);
+    const sections = [];
+    sections.push(renderGroupSection('LITE', groups.lite));
+    sections.push(renderGroupSection('PREMIUM', groups.premium, { chip: 'AI-ассистент' }));
+    if (groups.other.length) sections.push(renderGroupSection('ДРУГИЕ ТАРИФЫ', groups.other));
+    sections.push(renderYearlySection(groups.yearly));
+    cont.innerHTML = sections.filter(Boolean).join('');
     cont.querySelectorAll('.pricing-card-buy').forEach((btn) => {
       btn.addEventListener('click', () => {
         const planId = parseInt(btn.dataset.planId, 10);

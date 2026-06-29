@@ -1112,6 +1112,95 @@ img { max-width: 100%; display: block; }
 .btn-block { width: 100%; justify-content: center; }
 .pricing-card-buy { padding: 12px; font-size: 14px; }
 
+/* Группы планов (Lite / Premium / Yearly) */
+.pricing-groups {
+  max-width: 900px;
+  margin: 0 auto 60px;
+}
+.pricing-group { margin-bottom: 32px; }
+.pricing-group-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 4px 14px;
+}
+.pricing-group-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+.pricing-group-chip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  background: rgba(124, 58, 237, 0.15);
+  color: #A78BFA;
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  border-radius: 999px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pricing-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+/* ₽/день и скидка под ценой */
+.pricing-card-perday {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 14px;
+  min-height: 16px;
+}
+.pricing-card-discount {
+  color: var(--success);
+  font-weight: 600;
+}
+
+/* Бейдж «Лучшая цена» — синий акцент, чтобы отличался от «Популярный» */
+.pricing-card-best {
+  border-color: #3B82F6;
+  box-shadow: 0 10px 30px rgba(59, 130, 246, 0.18);
+}
+.pricing-card-badge-best {
+  background: #3B82F6;
+  color: white;
+}
+
+/* Плашка годового тарифа */
+.pricing-yearly {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--card-accent, #7C3AED);
+  border-radius: 14px;
+  padding: 18px 22px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.pricing-yearly-info { min-width: 0; flex: 1; }
+.pricing-yearly-name {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+.pricing-yearly-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.pricing-yearly .pricing-card-buy {
+  width: auto;
+  white-space: nowrap;
+  padding: 10px 18px;
+}
+
 .pricing-faq {
   max-width: 720px;
   margin: 60px auto 0;
