@@ -16,6 +16,8 @@ const KNOWN_FEATURES = [
   { key: 'custom_hotkeys',   label: 'Расширенная настройка горячих клавиш' },
   { key: 'ai_assistant',     label: 'AI-ассистент по законам и правилам' },
   { key: 'multi_server',     label: 'Просмотр законов любого сервера' },
+  { key: 'binder_unlimited', label: 'Безлимит макросов в биндере' },
+  { key: 'binder_share',     label: 'Поделиться биндером по коду' },
 ];
 
 const DURATIONS = { 7: 7, 14: 14, 30: 30 };

@@ -148,7 +148,7 @@ async function runMigrations() {
        VALUES ('lite', 'Lite',
                'Базовая подписка: безлимит заметок, темы, без рекламы',
                '#7B2BFF',
-               JSON_ARRAY('notes_unlimited', 'themes_extra', 'no_ads', 'multi_server'),
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'no_ads', 'multi_server', 'binder_unlimited', 'binder_share'),
                14900, 'RUB', 30, 1, 5)`
     );
     await db.query(
@@ -156,7 +156,7 @@ async function runMigrations() {
        VALUES ('premium', 'Premium',
                'Полный доступ: AI-ассистент, приоритетная поддержка, ранний доступ',
                '#DF005B',
-               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant', 'multi_server'),
+               JSON_ARRAY('notes_unlimited', 'themes_extra', 'priority_support', 'early_access', 'no_ads', 'export_data', 'ai_assistant', 'multi_server', 'binder_unlimited', 'binder_share'),
                29900, 'RUB', 30, 1, 10)`
     );
     console.log('[InitDB] ✓ subscription tables ensured');
@@ -279,6 +279,21 @@ async function runMigrations() {
       ) ENGINE=InnoDB
     `);
     console.log('[InitDB] ✓ note_shares ensured');
+
+    // ============================================================
+    // Binder share: один снимок биндера на пользователя + публичный код
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS binder_shares (
+        user_id INT PRIMARY KEY,
+        code VARCHAR(16) NOT NULL UNIQUE,
+        snapshot JSON NULL,
+        macros_count INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_code (code)
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] ✓ binder_shares ensured');
 
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (
