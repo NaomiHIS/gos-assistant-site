@@ -57,10 +57,11 @@ function sanitizeQuery(s) {
     .trim();
 }
 
-// Извлекает явно упомянутые номера статей из текста: "ст. 1.5", "264 УК", "статья 12.7" и т.п.
+// Извлекает явно упомянутые номера статей из текста: "ст. 1.5", "264 УК", "статья 12.7.2" и т.п.
 function extractMentionedCodes(text) {
   if (!text) return [];
-  const re = /(?:ст(?:атья|\.|\b)\.?\s*)?(\d+(?:\.\d+)?)/g;
+  // Поддерживаем многоуровневые номера: 1, 1.5, 1.5.2, 1.5.2.3
+  const re = /(?:ст(?:атья|\.|\b)\.?\s*)?(\d+(?:\.\d+){0,4})/g;
   const out = new Set();
   let m;
   while ((m = re.exec(text))) {
@@ -77,19 +78,35 @@ function extractMentionedCodes(text) {
 // если юзер пишет "по ст. 264" — AI получит именно её, а не догадки.
 async function findByCode(serverId, codes) {
   if (!serverId || !codes.length) return [];
-  const placeholders = codes.map(() => '?').join(',');
+  // Берём точные совпадения + детальные подстатьи + родителей.
+  // Например, по «1.5» подгребём 1.5.1, 1.5.2 и сами 1.5 — чтобы AI имел
+  // полный контекст, даже если он указал «общую» статью или «детальную».
+  const conds = [];
+  const params = [serverId];
+  for (const c of codes) {
+    conds.push('a.code = ?');
+    params.push(c);
+    // Дети: code LIKE '1.5.%'
+    conds.push("a.code LIKE ?");
+    params.push(c + '.%');
+    // Родители: разбираем по точкам и пушим все префиксы
+    const parts = String(c).split('.');
+    for (let i = 1; i < parts.length; i++) {
+      conds.push('a.code = ?');
+      params.push(parts.slice(0, i).join('.'));
+    }
+  }
   try {
     // is_active НЕ фильтруем — если юзер явно ссылается на номер статьи,
     // показываем её AI даже если временно деактивирована.
-    // LIMIT инлайним литералом: mysql2.execute() не биндит ? в LIMIT.
     return await db.query(
       `SELECT a.code, a.title, a.text, a.penalty, a.wanted_stars AS wantedStars,
               c.short_name AS catShort, c.name AS catName
          FROM articles a
          LEFT JOIN categories c ON c.id = a.category_id
-        WHERE a.server_id = ? AND a.code IN (${placeholders})
+        WHERE a.server_id = ? AND (${conds.join(' OR ')})
         LIMIT ${MAX_CODE_LOOKUP}`,
-      [serverId, ...codes]
+      params
     );
   } catch (err) {
     console.warn('[AI] findByCode failed:', err.message);
@@ -366,9 +383,13 @@ function normalizeRef(cat, num) {
 function extractArticleRefs(text) {
   if (!text) return [];
   const cats = ARTICLE_CATS.join('|');
-  // Варианты: "УК ст. 1.1", "УК 1.1", "ст. 1.1 УК", "статья 1.1 УК"
+  // Номер: поддерживаем 1, 1.5, 1.5.2, 1.5.2.3 — раньше было только до двух уровней,
+  // из-за чего AI «УК ст. 1.5.2» парсилось как «1.5», и валидатор лажал.
+  const NUM = '\\d+(?:\\.\\d+){0,4}';
+  // Варианты: "УК ст. 1.1", "УК 1.1", "ст. 1.1 УК", "статья 1.1 УК",
+  // "УК, ст. 1.1", "ст 1.1 УК"
   const re = new RegExp(
-    `(?:(${cats})\\s*(?:ст(?:атья|\\.|\\b)\\.?\\s*)?(\\d+(?:\\.\\d+)?))|(?:ст(?:атья|\\.|\\b)\\.?\\s*(\\d+(?:\\.\\d+)?)\\s*(${cats}))`,
+    `(?:(${cats})[\\s,.;:\\-—]*(?:ст(?:атья|\\.|\\b)\\.?\\s*)?(${NUM}))|(?:ст(?:атья|\\.|\\b)\\.?\\s*(${NUM})[\\s,.;:\\-—]*(${cats}))`,
     'gi'
   );
   const refs = [];
@@ -643,16 +664,61 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     }
   }
 
+  // Кэш префикс-индексов на validKeys чтобы не пересоздавать на каждой ссылке.
+  const prefixCache = new WeakMap();
+  function getPrefixIndex(validKeys) {
+    if (prefixCache.has(validKeys)) return prefixCache.get(validKeys);
+    // Группируем по категории и сортируем по длине номера, чтобы быстро искать
+    // префикс-совпадение в обе стороны.
+    const byCat = new Map();
+    for (const key of validKeys) {
+      const sep = key.indexOf(':');
+      if (sep < 0) continue;
+      const cat = key.slice(0, sep);
+      const num = key.slice(sep + 1);
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat).push(num);
+    }
+    prefixCache.set(validKeys, byCat);
+    return byCat;
+  }
+
+  function isReferenceValid(ref, validKeys) {
+    if (validKeys.has(ref.key)) return true;
+    const byCat = getPrefixIndex(validKeys);
+    const cat = ref.key.slice(0, ref.key.indexOf(':'));
+    const num = ref.key.slice(ref.key.indexOf(':') + 1);
+    const inCat = byCat.get(cat);
+    if (!inCat) return false;
+    // Случай 1: AI назвал общий номер «1.5», а в БД есть «1.5.1/1.5.2…»
+    const dotPref = num + '.';
+    if (inCat.some((dbNum) => dbNum.startsWith(dotPref))) return true;
+    // Случай 2: AI назвал детальный номер «1.5.2», а в БД хранится только «1.5»
+    // (части склеены в одну статью). Считаем валидным.
+    const parts = num.split('.');
+    if (parts.length > 1) {
+      for (let i = parts.length - 1; i >= 1; i--) {
+        const parent = parts.slice(0, i).join('.');
+        if (inCat.includes(parent)) return true;
+      }
+    }
+    return false;
+  }
+
   function detectInvalidRefs(text, validKeys) {
     if (!validKeys || !validKeys.size) return [];
     const refs = extractArticleRefs(text);
     const out = [];
     const seen = new Set();
     for (const r of refs) {
-      if (!validKeys.has(r.key) && !seen.has(r.key)) {
-        seen.add(r.key);
+      if (seen.has(r.key)) continue;
+      seen.add(r.key);
+      if (!isReferenceValid(r, validKeys)) {
         out.push(r.raw);
       }
+    }
+    if (out.length) {
+      console.warn(`[AI] detectInvalidRefs flagged ${out.length}/${refs.length} refs: ${out.join(' | ')}`);
     }
     return out;
   }
