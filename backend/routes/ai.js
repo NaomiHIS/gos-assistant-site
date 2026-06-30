@@ -57,17 +57,20 @@ function sanitizeQuery(s) {
     .trim();
 }
 
-// Извлекает явно упомянутые номера статей из текста: "ст. 1.5", "264 УК", "статья 12.7.2" и т.п.
+// Извлекает явно упомянутые номера статей из текста: "ст. 1.5", "264 УК", "статья 12.7.2", "12.8 ч.1" и т.п.
 function extractMentionedCodes(text) {
   if (!text) return [];
-  // Поддерживаем многоуровневые номера: 1, 1.5, 1.5.2, 1.5.2.3
-  const re = /(?:ст(?:атья|\.|\b)\.?\s*)?(\d+(?:\.\d+){0,4})/g;
+  // Поддерживаем многоуровневые номера и опциональный суффикс части ("12.8 ч.1")
+  const re = /(?:ст(?:атья|\.|\b)\.?\s*)?(\d+(?:\.\d+){0,4}(?:\s+(?:ч\.?|часть)\s*\d{1,2})?)/gi;
   const out = new Set();
   let m;
   while ((m = re.exec(text))) {
-    const code = m[1];
-    // Игнорируем "плоские" числа без точки если они слишком короткие (вероятно не статья)
-    if (!code.includes('.') && code.length < 2) continue;
+    let code = m[1].trim();
+    // Нормализуем "ч 1" → "ч.1"
+    code = code.replace(/\s+(?:ч\.?|часть)\s*(\d{1,2})$/i, ' ч.$1');
+    // Игнорируем "плоские" числа без точки если они слишком короткие
+    const base = code.replace(/\s+ч\.?\d+$/i, '');
+    if (!base.includes('.') && base.length < 2) continue;
     out.add(code);
     if (out.size >= 12) break;
   }
@@ -84,13 +87,24 @@ async function findByCode(serverId, codes) {
   const conds = [];
   const params = [serverId];
   for (const c of codes) {
+    // Если AI прислал код с частью ("12.8 ч.1") — отдельно ищем базу
+    const baseCode = String(c).replace(/\s+ч\.?\d+$/i, '').trim();
     conds.push('a.code = ?');
     params.push(c);
-    // Дети: code LIKE '1.5.%'
-    conds.push("a.code LIKE ?");
-    params.push(c + '.%');
-    // Родители: разбираем по точкам и пушим все префиксы
-    const parts = String(c).split('.');
+    if (baseCode !== c) {
+      conds.push('a.code = ?');
+      params.push(baseCode);
+    }
+    // Дети по точке: '12.8.%'
+    conds.push('a.code LIKE ?');
+    params.push(baseCode + '.%');
+    // Части: '12.8 ч.%' — формат хранения в Majestic-парсере (см. parsers/generic.js)
+    conds.push('a.code LIKE ?');
+    params.push(baseCode + ' ч.%');
+    conds.push('a.code LIKE ?');
+    params.push(baseCode + ' ч%');
+    // Родители по точкам: 12.8.1 → ещё проверим 12.8 и 12
+    const parts = baseCode.split('.');
     for (let i = 1; i < parts.length; i++) {
       conds.push('a.code = ?');
       params.push(parts.slice(0, i).join('.'));
@@ -383,13 +397,14 @@ function normalizeRef(cat, num) {
 function extractArticleRefs(text) {
   if (!text) return [];
   const cats = ARTICLE_CATS.join('|');
-  // Номер: поддерживаем 1, 1.5, 1.5.2, 1.5.2.3 — раньше было только до двух уровней,
-  // из-за чего AI «УК ст. 1.5.2» парсилось как «1.5», и валидатор лажал.
+  // Базовый номер: 1, 1.5, 1.5.2, 1.5.2.3
   const NUM = '\\d+(?:\\.\\d+){0,4}';
-  // Варианты: "УК ст. 1.1", "УК 1.1", "ст. 1.1 УК", "статья 1.1 УК",
-  // "УК, ст. 1.1", "ст 1.1 УК"
+  // Опциональный суффикс части — "ч.1", "ч. 2", "часть 3", "ч1"
+  // Парсер Majestic хранит части как "12.8 ч.1" в a.code, поэтому нам нужно
+  // включать суффикс в захват, иначе валидатор пометит существующую статью как несуществующую.
+  const PART = '(?:\\s+(?:ч\\.?|часть)\\s*\\d{1,2})?';
   const re = new RegExp(
-    `(?:(${cats})[\\s,.;:\\-—]*(?:ст(?:атья|\\.|\\b)\\.?\\s*)?(${NUM}))|(?:ст(?:атья|\\.|\\b)\\.?\\s*(${NUM})[\\s,.;:\\-—]*(${cats}))`,
+    `(?:(${cats})[\\s,.;:\\-—]*(?:ст(?:атья|\\.|\\b)\\.?\\s*)?(${NUM}${PART}))|(?:ст(?:атья|\\.|\\b)\\.?\\s*(${NUM}${PART})[\\s,.;:\\-—]*(${cats}))`,
     'gi'
   );
   const refs = [];
@@ -397,7 +412,11 @@ function extractArticleRefs(text) {
   while ((m = re.exec(text))) {
     const cat = (m[1] || m[4] || '').toUpperCase();
     const num = m[2] || m[3];
-    if (cat && num) refs.push({ cat, num, raw: m[0].trim(), key: normalizeRef(cat, num) });
+    if (cat && num) {
+      // Нормализуем номер части: "ч 1" → "ч.1", "часть 1" → "ч.1"
+      const normNum = String(num).replace(/\s+(?:ч\.?|часть)\s*(\d{1,2})/i, ' ч.$1');
+      refs.push({ cat, num: normNum, raw: m[0].trim(), key: normalizeRef(cat, normNum) });
+    }
   }
   return refs;
 }
@@ -690,12 +709,22 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     const num = ref.key.slice(ref.key.indexOf(':') + 1);
     const inCat = byCat.get(cat);
     if (!inCat) return false;
-    // Случай 1: AI назвал общий номер «1.5», а в БД есть «1.5.1/1.5.2…»
+    // Базовый номер без суффикса части ("12.8 ч.1" → "12.8")
+    const baseNum = num.replace(/\s+ч\.?\d+$/i, '').trim();
+
+    // Случай 1: AI назвал общий «12.8», а в БД лежат подстатьи «12.8.1» или части «12.8 ч.1»
     const dotPref = num + '.';
-    if (inCat.some((dbNum) => dbNum.startsWith(dotPref))) return true;
-    // Случай 2: AI назвал детальный номер «1.5.2», а в БД хранится только «1.5»
-    // (части склеены в одну статью). Считаем валидным.
-    const parts = num.split('.');
+    const partPref = num + ' ч.';
+    const partPrefAlt = num + ' ч';
+    if (inCat.some((dbNum) => dbNum.startsWith(dotPref) || dbNum.startsWith(partPref) || dbNum.startsWith(partPrefAlt))) {
+      return true;
+    }
+    // То же, но если AI добавил часть, а в БД лежит другой набор частей под тем же базом
+    if (baseNum !== num && inCat.some((dbNum) => dbNum === baseNum || dbNum.startsWith(baseNum + ' ч.') || dbNum.startsWith(baseNum + '.'))) {
+      return true;
+    }
+    // Случай 2: AI назвал детальный «1.5.2», а в БД хранится только «1.5» (склеено).
+    const parts = baseNum.split('.');
     if (parts.length > 1) {
       for (let i = parts.length - 1; i >= 1; i--) {
         const parent = parts.slice(0, i).join('.');
