@@ -25,8 +25,13 @@ function parseSnapshot(raw) {
   } catch { return []; }
 }
 
-const STEP_TYPES = new Set(['text', 'key', 'combo', 'delay']);
-const MAX_MACROS = 200;
+const STEP_TYPES = new Set(['text', 'command', 'key', 'combo', 'delay']);
+const STEP_CATEGORIES = new Set([
+  'message', 'roleplay', 'documents', 'transport',
+  'government', 'criminal', 'medical', 'other',
+]);
+const MAX_PROFILES = 20;
+const MAX_MACROS_PER_PROFILE = 200;
 const MAX_STEPS_PER_MACRO = 50;
 
 function cleanStep(s) {
@@ -37,9 +42,14 @@ function cleanStep(s) {
   if (type === 'text') {
     out.value = String(s.value || '').slice(0, 500);
     out.enter = !!s.enter;
+  } else if (type === 'command') {
+    out.category = STEP_CATEGORIES.has(s.category) ? s.category : 'roleplay';
+    out.prefix = String(s.prefix || '').slice(0, 16);
+    out.text = String(s.text || '').slice(0, 500);
+    out.enter = s.enter !== false; // у команд Enter по умолчанию on
   } else if (type === 'key') {
     out.key = String(s.key || '').slice(0, 32);
-    if (!out.key) return null;
+    // Пустой key разрешён — юзер может ещё печатать его в редакторе
   } else if (type === 'combo') {
     const mods = Array.isArray(s.modifiers) ? s.modifiers : [];
     out.modifiers = mods
@@ -47,7 +57,7 @@ function cleanStep(s) {
       .filter((m) => ['ctrl', 'shift', 'alt', 'meta'].includes(m))
       .slice(0, 4);
     out.key = String(s.key || '').slice(0, 32);
-    if (!out.key) return null;
+    // Пустой key разрешён
   } else if (type === 'delay') {
     const ms = parseInt(s.ms, 10);
     if (!Number.isFinite(ms) || ms < 0) return null;
@@ -66,9 +76,23 @@ function cleanMacro(m) {
     name: m.name ? String(m.name).slice(0, 100) : '',
     hotkey: m.hotkey ? String(m.hotkey).slice(0, 64) : null,
     enabled: m.enabled !== false,
+    showInOverlay: !!m.showInOverlay,
     steps,
     createdAt: m.createdAt ? String(m.createdAt).slice(0, 32) : null,
     updatedAt: m.updatedAt ? String(m.updatedAt).slice(0, 32) : null,
+  };
+}
+
+function cleanProfile(p) {
+  if (!p || typeof p !== 'object') return null;
+  const macros = Array.isArray(p.macros)
+    ? p.macros.slice(0, MAX_MACROS_PER_PROFILE).map(cleanMacro).filter((m) => m && (m.name || m.steps.length))
+    : [];
+  return {
+    id: p.id ? String(p.id).slice(0, 64) : null,
+    name: p.name ? String(p.name).slice(0, 50) : 'Профиль',
+    color: (typeof p.color === 'string' && /^#[0-9A-Fa-f]{3,8}$/.test(p.color)) ? p.color : '#DF005B',
+    macros,
   };
 }
 
@@ -141,25 +165,34 @@ router.get('/share', requireAuth, async (req, res) => {
 
 // ============================================================
 // PUT /api/binder/share/snapshot — обновить снимок (вызывает app debounced)
-// body: { macros: [{id, name, hotkey, enabled, steps[]}, ...] }
+// body (v2): { profiles: [{id, name, color, macros: [...]}, ...] }
+// body (v1, обратная совместимость): { macros: [...] } — оборачиваем в один профиль
 // ============================================================
 router.put('/share/snapshot', requireAuth, requireShareFeature, async (req, res) => {
   try {
-    const { macros } = req.body || {};
-    if (!Array.isArray(macros)) return res.status(400).json({ success: false, error: 'macros должен быть массивом' });
-    if (macros.length > MAX_MACROS) return res.status(400).json({ success: false, error: 'Слишком много макросов' });
+    const body = req.body || {};
+    let rawProfiles;
+    if (Array.isArray(body.profiles)) {
+      rawProfiles = body.profiles;
+    } else if (Array.isArray(body.macros)) {
+      rawProfiles = [{ id: null, name: 'Импорт', color: '#DF005B', macros: body.macros }];
+    } else {
+      return res.status(400).json({ success: false, error: 'Ожидается profiles[] или macros[]' });
+    }
+    if (rawProfiles.length > MAX_PROFILES) return res.status(400).json({ success: false, error: 'Слишком много профилей' });
 
-    const cleaned = macros
-      .slice(0, MAX_MACROS)
-      .map(cleanMacro)
-      .filter((m) => m && (m.name || m.steps.length));
+    const cleaned = rawProfiles
+      .slice(0, MAX_PROFILES)
+      .map(cleanProfile)
+      .filter(Boolean);
 
+    const totalMacros = cleaned.reduce((sum, p) => sum + p.macros.length, 0);
     const share = await ensureMyShare(req.user.id);
     await db.query(
       'UPDATE binder_shares SET snapshot = ?, macros_count = ? WHERE user_id = ?',
-      [JSON.stringify(cleaned), cleaned.length, req.user.id]
+      [JSON.stringify(cleaned), totalMacros, req.user.id]
     );
-    res.json({ success: true, code: share.code, macrosCount: cleaned.length });
+    res.json({ success: true, code: share.code, profilesCount: cleaned.length, macrosCount: totalMacros });
   } catch (err) {
     console.error('[Binder] snapshot error:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -209,12 +242,23 @@ router.get('/share/lookup/:code', requireAuth, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Это ваш собственный код — биндер уже у вас' });
     }
 
-    const macros = parseSnapshot(row.snapshot);
+    const snapshot = parseSnapshot(row.snapshot);
+    // Снимок может быть массивом профилей (v2) или массивом макросов (v1) — отдаём обе формы
+    let profiles, macros;
+    if (snapshot.length && Array.isArray(snapshot[0].macros)) {
+      profiles = snapshot;
+      macros = snapshot.flatMap((p) => p.macros || []);
+    } else {
+      profiles = [{ id: null, name: 'Импорт', color: '#DF005B', macros: snapshot }];
+      macros = snapshot;
+    }
     res.json({
       success: true,
       ownerName: row.ownerName,
-      macrosCount: row.macrosCount || macros.length,
-      macros,
+      profilesCount: profiles.length,
+      macrosCount: macros.length,
+      profiles,
+      macros, // оставляем для обратной совместимости со старым клиентом
       updatedAt: row.updatedAt,
     });
   } catch (err) {

@@ -42,6 +42,11 @@
     .then((r) => r.json())
     .then((data) => {
       if (!data || !data.success) return;
+      // Обновляем плашку «Версия X уже доступна» в hero-секции
+      const heroVer = document.getElementById('hero-latest-version');
+      const latestVersion = (data.installer && data.installer.version) || (data.portable && data.portable.version);
+      if (heroVer && latestVersion) heroVer.textContent = latestVersion;
+
       const info = document.getElementById('download-info');
       const parts = [];
       if (data.installer) {
