@@ -1,34 +1,31 @@
 // ============================================================
-// Parser for GTA 5 RP project — STUB.
+// Parser for GTA 5 RP project.
 //
-// Реализация ждёт исходного репозитория с данными законов (по аналогии
-// с alamantik/majestic-laws-db для Majestic). Как только источник появится
-// — заменить NOT_CONFIGURED_ERROR на реальные fetch/import.
+// Автосинхронизация из внешнего репозитория для GTA 5 RP пока не реализована
+// (нет открытого источника типа alamantik/majestic-laws-db). Импорт законов
+// делается вручную через универсальный JSON-импортёр:
+//   POST /api/parser/json/preview-server { serverId, json }
+//   POST /api/parser/json/import-server  { serverId, json, mode }
+// который работает с любым сервером (см. routes/parser.js).
 //
-// Ожидаемый интерфейс (см. lawsdb.js):
-//   getStructure()           → { servers: [...], files: [...] }
-//   getSyncStatus()          → { updates: [], upToDate: N }
-//   importServer(file, mode) → { imported, updated, skipped }
-//   importRules(target, mode)→ { imported, updated }
-//   importAll(mode)          → { totalServers, totalArticles }
-//
-// В админке при выборе проекта GTA 5 RP кнопки импорта покажут этот текст.
+// Формат JSON описан в database/gta5rp-sample.json.
 // ============================================================
 
-const NOT_CONFIGURED = new Error(
-  'Источник данных для GTA 5 RP не настроен. Обратитесь к администратору.'
+const AUTOSYNC_UNAVAILABLE = new Error(
+  'Автосинхронизация GTA 5 RP пока не настроена. Используйте JSON-импорт для конкретного сервера.'
 );
-NOT_CONFIGURED.code = 'PARSER_NOT_CONFIGURED';
+AUTOSYNC_UNAVAILABLE.code = 'AUTOSYNC_UNAVAILABLE';
 
-async function getStructure() { throw NOT_CONFIGURED; }
-async function getSyncStatus() { throw NOT_CONFIGURED; }
-async function importServer() { throw NOT_CONFIGURED; }
-async function importRules() { throw NOT_CONFIGURED; }
-async function importAll() { throw NOT_CONFIGURED; }
+async function getStructure() { throw AUTOSYNC_UNAVAILABLE; }
+async function getSyncStatus() { throw AUTOSYNC_UNAVAILABLE; }
+async function importServer() { throw AUTOSYNC_UNAVAILABLE; }
+async function importRules() { throw AUTOSYNC_UNAVAILABLE; }
+async function importAll() { throw AUTOSYNC_UNAVAILABLE; }
 
 module.exports = {
   name: 'gta5rp',
-  configured: false,
+  configured: false,       // авто-парсер не настроен
+  supportsJsonImport: true, // JSON-импорт работает через /api/parser/json/*
   getStructure,
   getSyncStatus,
   importServer,

@@ -319,10 +319,11 @@ async function runMigrations() {
       `INSERT IGNORE INTO projects (id, name, description, color, icon, parser_source, sort_order)
        VALUES ('majestic', 'Majestic RP', 'Основной проект — все сервера Majestic RP', '#DF005B', 'MJ', 'lawsdb', 1)`
     );
-    // Заготовка для GTA 5 RP (не активна, парсер добавим позже)
+    // GTA 5 RP — активирован. Автосинхронизация из внешнего репо пока не настроена,
+    // законы заливаются вручную через админку → Парсер → JSON-импорт.
     await db.query(
       `INSERT IGNORE INTO projects (id, name, description, color, icon, parser_source, sort_order, is_active)
-       VALUES ('gta5rp', 'GTA 5 RP', 'Проект GTA 5 RP (в разработке)', '#7B2BFF', 'G5', NULL, 2, 0)`
+       VALUES ('gta5rp', 'GTA 5 RP', 'Проект GTA 5 RP — законы загружаются через JSON-импорт', '#7B2BFF', 'G5', 'gta5rp', 2, 1)`
     );
 
     // ALTER: привязка серверов к проекту
