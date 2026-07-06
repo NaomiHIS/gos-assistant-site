@@ -21,6 +21,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
           <span>Дашборд</span>
         </div>
+        <div class="admin-nav-item" data-view="projects">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M9 3v18"/></svg>
+          <span>Проекты</span>
+        </div>
         <div class="admin-nav-item" data-view="servers">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
           <span>Серверы</span>
@@ -138,6 +142,25 @@
         </div>
       </div>
 
+      <!-- PROJECTS -->
+      <div class="view hidden" data-view="projects">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Проекты</div>
+            <div class="admin-subtitle">Верхний уровень над серверами — Majestic RP, GTA 5 RP и т.д.</div>
+          </div>
+          <button class="btn btn-primary" data-modal="project">+ Добавить проект</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr><th>Иконка</th><th>ID</th><th>Название</th><th>Парсер</th><th>Серверов</th><th>Статус</th><th></th></tr>
+            </thead>
+            <tbody id="projects-table"></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- SERVERS -->
       <div class="view hidden" data-view="servers">
         <div class="admin-header">
@@ -150,7 +173,7 @@
         <div class="table-wrap">
           <table class="table">
             <thead>
-              <tr><th>Иконка</th><th>ID</th><th>Название</th><th>Статус</th><th></th></tr>
+              <tr><th>Иконка</th><th>ID</th><th>Название</th><th>Проект</th><th>Статус</th><th></th></tr>
             </thead>
             <tbody id="servers-table"></tbody>
           </table>
@@ -967,6 +990,9 @@
         <button class="modal-close" data-close>×</button>
       </div>
       <div class="modal-body">
+        <div class="input-group"><label class="input-label">Проект</label>
+          <select class="input select" id="srv-project"><option value="">— Проект —</option></select>
+        </div>
         <div class="input-group"><label class="input-label">ID (slug)</label><input type="text" class="input" id="srv-id" placeholder="server-1" /></div>
         <div class="input-group"><label class="input-label">Название</label><input type="text" class="input" id="srv-name" /></div>
         <div class="input-group"><label class="input-label">Иконка (2-3 символа)</label><input type="text" class="input" id="srv-icon" placeholder="S1" /></div>
@@ -977,6 +1003,35 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close>Отмена</button>
         <button class="btn btn-primary" id="srv-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Project modal -->
+  <div class="modal-backdrop" id="modal-project">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-project-title">Новый проект</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group"><label class="input-label">ID (slug)</label><input type="text" class="input" id="prj-id" placeholder="majestic" /></div>
+        <div class="input-group"><label class="input-label">Название</label><input type="text" class="input" id="prj-name" placeholder="Majestic RP" /></div>
+        <div class="input-group"><label class="input-label">Иконка (2-3 символа)</label><input type="text" class="input" id="prj-icon" placeholder="MJ" value="GP" /></div>
+        <div class="input-group"><label class="input-label">Цвет (HEX)</label><input type="text" class="input" id="prj-color" value="#DF005B" /></div>
+        <div class="input-group"><label class="input-label">Парсер (parser_source)</label>
+          <select class="input select" id="prj-parser">
+            <option value="">— Без парсера —</option>
+            <option value="lawsdb">lawsdb (alamantik / majestic-laws-db)</option>
+          </select>
+        </div>
+        <div class="input-group"><label class="input-label">Описание</label><textarea class="input textarea" id="prj-desc"></textarea></div>
+        <div class="input-group"><label class="input-label">Сортировка</label><input type="number" class="input" id="prj-order" value="0" /></div>
+        <div class="input-group"><label class="input-label"><input type="checkbox" id="prj-active" checked /> Активен</label></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="prj-save">Сохранить</button>
       </div>
     </div>
   </div>

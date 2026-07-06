@@ -96,7 +96,43 @@
             <input type="text" class="input" id="profile-username" />
           </div>
 
+          <div class="input-group">
+            <label class="input-label">Игровой проект и сервер</label>
+            <div class="cabinet-project-row">
+              <span class="cabinet-project-value" id="profile-project-value">—</span>
+              <span class="text-muted">/</span>
+              <span class="cabinet-server-value" id="profile-server-value">—</span>
+              <button class="btn btn-secondary btn-sm" id="btn-change-server">Сменить</button>
+            </div>
+            <div class="text-xs text-muted mt-2">Смена сервера в другой проект — с подпиской Lite или Premium.</div>
+          </div>
+
           <button class="btn btn-primary" id="btn-save-profile">Сохранить изменения</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Change server modal -->
+    <div class="modal-backdrop" id="modal-change-server">
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title">Сменить проект и сервер</div>
+          <button class="modal-close" id="modal-change-server-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="input-group">
+            <label class="input-label">Проект</label>
+            <select class="input select" id="change-project"><option value="">Загрузка…</option></select>
+          </div>
+          <div class="input-group">
+            <label class="input-label">Сервер</label>
+            <select class="input select" id="change-server" disabled><option value="">Сначала выберите проект</option></select>
+          </div>
+          <div class="form-error" id="change-server-error" style="display:none;color:var(--danger);padding:8px;background:rgba(239,68,68,0.1);border-radius:6px;font-size:13px"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="btn-change-cancel">Отмена</button>
+          <button class="btn btn-primary" id="btn-change-save">Применить</button>
         </div>
       </div>
     </div>

@@ -269,6 +269,15 @@
     $('profile-email').value = State.user.email || '';
     $('profile-username').value = State.user.username || '';
 
+    renderProjectServerRow();
+    $('btn-change-server').addEventListener('click', openChangeServerModal);
+    $('btn-change-cancel').addEventListener('click', closeChangeServerModal);
+    $('modal-change-server-close').addEventListener('click', closeChangeServerModal);
+    $('btn-change-save').addEventListener('click', applyChangeServer);
+    $('modal-change-server').addEventListener('click', (e) => {
+      if (e.target.id === 'modal-change-server') closeChangeServerModal();
+    });
+
     $('btn-save-profile').addEventListener('click', async () => {
       const username = $('profile-username').value.trim();
       if (!username || username.length < 2) {
@@ -308,6 +317,111 @@
     $('profile-success').classList.add('visible');
     $('profile-error').classList.remove('visible');
     setTimeout(() => $('profile-success').classList.remove('visible'), 3000);
+  }
+
+  // ============================================================
+  // Project & Server row
+  // ============================================================
+  const ChangeSrv = { projects: [], serversByProject: {} };
+
+  async function renderProjectServerRow() {
+    const u = State.user;
+    const projName = $('profile-project-value');
+    const srvName = $('profile-server-value');
+    if (!projName || !srvName) return;
+
+    // Загружаем проекты + сервера (публичные эндпойнты, без auth-фильтра)
+    if (!ChangeSrv.projects.length) {
+      try {
+        const [projRes, servRes] = await Promise.all([
+          fetch(window.GosClient.API_BASE + '/projects').then((r) => r.json()),
+          fetch(window.GosClient.API_BASE + '/servers').then((r) => r.json()),
+        ]);
+        ChangeSrv.projects = (projRes && projRes.projects) || [];
+        const all = Array.isArray(servRes) ? servRes : (servRes.servers || []);
+        ChangeSrv.serversByProject = {};
+        for (const s of all) {
+          const pid = s.projectId || s.project_id || 'majestic';
+          (ChangeSrv.serversByProject[pid] = ChangeSrv.serversByProject[pid] || []).push(s);
+        }
+      } catch {}
+    }
+
+    const proj = ChangeSrv.projects.find((p) => p.id === u.lockedProjectId);
+    const allServers = Object.values(ChangeSrv.serversByProject).flat();
+    const srv = allServers.find((s) => s.id === u.lockedServerId);
+    projName.textContent = proj ? proj.name : (u.lockedProjectId || '—');
+    srvName.textContent = srv ? srv.name : (u.lockedServerId || '—');
+  }
+
+  async function openChangeServerModal() {
+    await renderProjectServerRow(); // подгрузит если ещё не грузили
+    const projSel = $('change-project');
+    const srvSel = $('change-server');
+    const err = $('change-server-error');
+    err.style.display = 'none';
+
+    // Заполняем проекты
+    projSel.innerHTML = ChangeSrv.projects.length
+      ? ChangeSrv.projects.map((p) => `<option value="${p.id}" ${p.id === State.user.lockedProjectId ? 'selected' : ''}>${p.name}</option>`).join('')
+      : '<option value="">Проекты недоступны</option>';
+
+    const populateServers = (pid) => {
+      const list = ChangeSrv.serversByProject[pid] || [];
+      if (!list.length) {
+        srvSel.disabled = true;
+        srvSel.innerHTML = '<option value="">В этом проекте нет серверов</option>';
+      } else {
+        srvSel.disabled = false;
+        srvSel.innerHTML = list.map((s) => `<option value="${s.id}" ${s.id === State.user.lockedServerId ? 'selected' : ''}>${s.name}</option>`).join('');
+      }
+    };
+    populateServers(projSel.value);
+    projSel.onchange = () => populateServers(projSel.value);
+
+    $('modal-change-server').classList.add('open');
+  }
+
+  function closeChangeServerModal() {
+    $('modal-change-server').classList.remove('open');
+  }
+
+  async function applyChangeServer() {
+    const err = $('change-server-error');
+    err.style.display = 'none';
+    const serverId = $('change-server').value;
+    if (!serverId) {
+      err.textContent = 'Выберите сервер';
+      err.style.display = 'block';
+      return;
+    }
+    const btn = $('btn-change-save');
+    btn.disabled = true;
+    btn.textContent = 'Применяем...';
+    try {
+      const token = window.GosClient.getToken();
+      const res = await fetch(window.GosClient.API_BASE + '/auth/locked-server', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+        body: JSON.stringify({ serverId }),
+      }).then((r) => r.json());
+      if (!res.success) {
+        err.textContent = res.error || (res.code === 'MULTI_SERVER_REQUIRED' ? 'Нужна подписка Lite или Premium' : 'Ошибка');
+        err.style.display = 'block';
+        return;
+      }
+      State.user = res.user;
+      window.GosClient.setUser(res.user);
+      await renderProjectServerRow();
+      closeChangeServerModal();
+      showProfileSuccess('Проект и сервер обновлены');
+    } catch (e) {
+      err.textContent = e.message;
+      err.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Применить';
+    }
   }
 
   // ============================================================

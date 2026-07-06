@@ -75,6 +75,7 @@
     });
 
     if (name === 'dashboard') renderDashboard();
+    if (name === 'projects') renderProjectsTable();
     if (name === 'servers') renderServersTable();
     if (name === 'categories') renderCategoriesTable();
     if (name === 'articles') renderArticlesTable();
@@ -110,6 +111,7 @@
   function openModal(name, data) {
     State.editing = { type: name, id: data?.id || null };
     if (name === 'server') prepareServerModal(data);
+    if (name === 'project') prepareProjectModal(data);
     if (name === 'category') prepareCategoryModal(data);
     if (name === 'article') prepareArticleModal(data);
     if (name === 'donate') {
@@ -133,14 +135,18 @@
   // ============================================================
   async function loadAll() {
     try {
-      const [servers, categories, articles] = await Promise.all([
+      const [servers, categories, articles, projectsRes] = await Promise.all([
         window.GosClient.servers.listAll(),
         window.GosClient.categories.listAll(),
         window.GosClient.articles.list(),
+        fetch(window.GosClient.API_BASE + '/projects/all', {
+          headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+        }).then((r) => r.json()).catch(() => ({ projects: [] })),
       ]);
       State.servers = servers;
       State.categories = categories;
       State.articles = articles;
+      State.projects = (projectsRes && projectsRes.projects) || [];
       populateArticleFilters();
     } catch (err) {
       toast('Ошибка загрузки данных: ' + err.message);
@@ -175,11 +181,16 @@
   // ============================================================
   function renderServersTable() {
     const tbody = $('servers-table');
+    const projectName = (id) => {
+      const p = (State.projects || []).find((x) => x.id === id);
+      return p ? p.name : (id || '—');
+    };
     tbody.innerHTML = State.servers.map((s) => `
       <tr>
         <td><div class="brand-icon" style="width:30px;height:30px;font-size:11px;background:${escapeHtml(s.color)}">${escapeHtml(s.icon)}</div></td>
         <td><code>${escapeHtml(s.id)}</code></td>
         <td>${escapeHtml(s.name)}</td>
+        <td><span class="badge badge-muted">${escapeHtml(projectName(s.projectId || s.project_id))}</span></td>
         <td><span class="badge ${s.is_active ? 'badge-success' : 'badge-muted'}">${s.is_active ? 'Активен' : 'Выкл'}</span></td>
         <td>
           <div class="actions-row">
@@ -209,6 +220,68 @@
     });
   }
 
+  // ============================================================
+  // Projects
+  // ============================================================
+  function renderProjectsTable() {
+    const tbody = $('projects-table');
+    if (!tbody) return;
+    const projects = State.projects || [];
+    const serversPerProject = (pid) => State.servers.filter((s) => (s.projectId || s.project_id) === pid).length;
+    tbody.innerHTML = projects.length ? projects.map((p) => `
+      <tr>
+        <td><div class="brand-icon" style="width:30px;height:30px;font-size:11px;background:${escapeHtml(p.color)}">${escapeHtml(p.icon)}</div></td>
+        <td><code>${escapeHtml(p.id)}</code></td>
+        <td>${escapeHtml(p.name)}</td>
+        <td>${p.parserSource ? `<code>${escapeHtml(p.parserSource)}</code>` : '<span class="text-muted">—</span>'}</td>
+        <td>${serversPerProject(p.id)}</td>
+        <td><span class="badge ${p.isActive ? 'badge-success' : 'badge-muted'}">${p.isActive ? 'Активен' : 'Выкл'}</span></td>
+        <td>
+          <div class="actions-row">
+            <button class="icon-btn" data-edit-project="${escapeHtml(p.id)}" title="Редактировать">✎</button>
+            <button class="icon-btn danger" data-del-project="${escapeHtml(p.id)}" title="Удалить">✕</button>
+          </div>
+        </td>
+      </tr>
+    `).join('') : '<tr><td colspan="7" class="text-center text-muted" style="padding:20px">Проектов пока нет</td></tr>';
+
+    tbody.querySelectorAll('[data-edit-project]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const p = (State.projects || []).find((x) => x.id === b.dataset.editProject);
+        if (p) openModal('project', p);
+      });
+    });
+    tbody.querySelectorAll('[data-del-project]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        if (!confirm('Удалить проект? Это возможно только если в нём нет серверов.')) return;
+        const token = window.GosClient.getToken();
+        try {
+          const res = await fetch(window.GosClient.API_BASE + '/projects/' + encodeURIComponent(b.dataset.delProject), {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer ' + token },
+          }).then((r) => r.json());
+          if (!res.success) throw new Error(res.error || 'Ошибка удаления');
+          await loadAll();
+          renderProjectsTable();
+          toast('Проект удалён');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+  }
+
+  function prepareProjectModal(p) {
+    $('modal-project-title').textContent = p ? 'Редактирование проекта' : 'Новый проект';
+    $('prj-id').value = p?.id || '';
+    $('prj-id').disabled = !!p;
+    $('prj-name').value = p?.name || '';
+    $('prj-icon').value = p?.icon || 'GP';
+    $('prj-color').value = p?.color || '#DF005B';
+    $('prj-parser').value = p?.parserSource || '';
+    $('prj-desc').value = p?.description || '';
+    $('prj-order').value = p?.sortOrder != null ? p.sortOrder : 0;
+    $('prj-active').checked = p ? !!p.isActive : true;
+  }
+
   function prepareServerModal(srv) {
     $('modal-server-title').textContent = srv ? 'Редактирование сервера' : 'Новый сервер';
     $('srv-id').value = srv?.id || '';
@@ -218,6 +291,15 @@
     $('srv-color').value = srv?.color || '#DF005B';
     $('srv-desc').value = srv?.description || '';
     $('srv-order').value = srv?.sort_order || 0;
+    // Селектор проекта
+    const projectSel = $('srv-project');
+    if (projectSel) {
+      const projects = State.projects || [];
+      const currentPid = srv?.projectId || srv?.project_id || (projects[0] && projects[0].id) || 'majestic';
+      projectSel.innerHTML = projects.length
+        ? projects.map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === currentPid ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')
+        : `<option value="${escapeHtml(currentPid)}">${escapeHtml(currentPid)}</option>`;
+    }
   }
 
   // ============================================================
@@ -422,6 +504,7 @@
         description: $('srv-desc').value.trim(),
         sort_order: parseInt($('srv-order').value, 10) || 0,
         is_active: true,
+        projectId: ($('srv-project') && $('srv-project').value) || 'majestic',
       };
       if (!data.id || !data.name) return toast('Заполните ID и название');
       try {
@@ -432,6 +515,38 @@
         }
         await loadAll();
         renderServersTable();
+        closeAllModals();
+        toast('Сохранено');
+      } catch (err) { toast('Ошибка: ' + err.message); }
+    });
+
+    // Projects: save
+    $('prj-save').addEventListener('click', async () => {
+      const payload = {
+        id: $('prj-id').value.trim().toLowerCase(),
+        name: $('prj-name').value.trim(),
+        icon: $('prj-icon').value.trim() || 'GP',
+        color: $('prj-color').value.trim() || '#DF005B',
+        parserSource: $('prj-parser').value || null,
+        description: $('prj-desc').value.trim(),
+        sortOrder: parseInt($('prj-order').value, 10) || 0,
+        isActive: $('prj-active').checked,
+      };
+      if (!payload.id || !payload.name) return toast('Заполните ID и название');
+      const token = window.GosClient.getToken();
+      const isEdit = State.editing.type === 'project' && State.editing.id;
+      const url = isEdit
+        ? window.GosClient.API_BASE + '/projects/' + encodeURIComponent(State.editing.id)
+        : window.GosClient.API_BASE + '/projects';
+      try {
+        const res = await fetch(url, {
+          method: isEdit ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify(payload),
+        }).then((r) => r.json());
+        if (!res.success) throw new Error(res.error || 'Ошибка сохранения');
+        await loadAll();
+        renderProjectsTable();
         closeAllModals();
         toast('Сохранено');
       } catch (err) { toast('Ошибка: ' + err.message); }
