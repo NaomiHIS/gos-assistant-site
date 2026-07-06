@@ -351,6 +351,14 @@
     $('cat-type').value = c?.type || 'laws';
     $('cat-color').value = c?.color || '#DF005B';
     $('cat-order').value = c?.sort_order || 0;
+    // Селектор проекта — пустое значение = глобальная
+    const projSel = $('cat-project');
+    if (projSel) {
+      const projects = State.projects || [];
+      const currentPid = c?.projectId || c?.project_id || '';
+      projSel.innerHTML = `<option value="" ${!currentPid ? 'selected' : ''}>— Глобальная (во всех проектах) —</option>` +
+        projects.map((p) => `<option value="${escapeHtml(p.id)}" ${p.id === currentPid ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+    }
   }
 
   // ============================================================
@@ -561,6 +569,7 @@
         color: $('cat-color').value.trim() || '#DF005B',
         sort_order: parseInt($('cat-order').value, 10) || 0,
         is_active: true,
+        projectId: ($('cat-project') && $('cat-project').value) || null,
       };
       if (!data.id || !data.name) return toast('Заполните ID и название');
       try {

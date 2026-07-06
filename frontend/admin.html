@@ -1023,6 +1023,7 @@
           <select class="input select" id="prj-parser">
             <option value="">— Без парсера —</option>
             <option value="lawsdb">lawsdb (alamantik / majestic-laws-db)</option>
+            <option value="gta5rp">gta5rp (заготовка, источник не подключён)</option>
           </select>
         </div>
         <div class="input-group"><label class="input-label">Описание</label><textarea class="input textarea" id="prj-desc"></textarea></div>
@@ -1044,6 +1045,9 @@
         <button class="modal-close" data-close>×</button>
       </div>
       <div class="modal-body">
+        <div class="input-group"><label class="input-label">Проект</label>
+          <select class="input select" id="cat-project"><option value="">— Глобальная (во всех проектах) —</option></select>
+        </div>
         <div class="input-group"><label class="input-label">ID (slug)</label><input type="text" class="input" id="cat-id" placeholder="uk" /></div>
         <div class="input-group"><label class="input-label">Название</label><input type="text" class="input" id="cat-name" /></div>
         <div class="input-group"><label class="input-label">Короткое название</label><input type="text" class="input" id="cat-short" placeholder="УК" /></div>

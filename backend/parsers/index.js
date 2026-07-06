@@ -76,9 +76,10 @@ function parseRawText(text) {
 // Для нового проекта — добавить сюда модуль, парсер должен экспортировать
 // как минимум `getStructure()`, `syncStatus()` и одну из import-функций.
 // ============================================================
+const gta5rp = require('./gta5rp');
 const PARSER_REGISTRY = {
   lawsdb,       // majestic RP (alamantik/majestic-laws-db)
-  // 'gta5rp': require('./gta5rp'),  ← добавить когда появится
+  gta5rp,       // GTA 5 RP — заготовка, источник данных пока не подключён
 };
 
 function getProjectParser(parserSource) {

@@ -32,7 +32,10 @@
 - **Поддержка** — тикеты (Вопрос/Идея/Баг), переписка с админом, live-обновление
 - **Поддержать проект** — карточки с донат-ссылками (синхронизированы с сайтом)
 - **AI-ассистент** (Premium, `ai_assistant`) — чат с GPT-моделью для квалификации действий игроков с разных ролей (адвокат / прокурор / сотрудник ПД / судья / гражданский), с RAG-инъекцией реальных статей и пост-валидацией ссылок
-- **Биндер макросов** — последовательности шагов (текст / клавиша / комбинация / задержка) с глобальным хоткеем. Срабатывают только когда GTA 5 / RAGE / altV / FiveM в фокусе (через `active-win`). Эмуляция ввода через `@nut-tree-fork/nut-js`. Лимит 3 макроса без подписки, безлимит с `binder_unlimited` (Lite/Premium). Делиться по коду — с `binder_share`. Опциональный оверлей-шпаргалка на 9 пресетных позициях, без перемещения мышью и слайдера прозрачности
+- **Биндер макросов** — последовательности шагов (текст / клавиша / комбинация / задержка) с глобальным хоткеем. Срабатывают только когда GTA 5 / RAGE / altV / FiveM в фокусе (через `active-win`). Эмуляция ввода через `@nut-tree-fork/nut-js`. Лимит 3 макроса без подписки, безлимит с `binder_unlimited` (Lite/Premium). Делиться по коду — с `binder_share`. Опциональный оверлей-шпаргалка на 9 пресетных позициях, без перемещения мышью и слайдера прозрачности. В UI **временно скрыт** (готов к выпуску, ждёт финального решения)
+- **Проекты (мультипроектность)** — верхний уровень над серверами. Юзер выбирает игровой проект (Majestic RP / GTA 5 RP / …), у каждого свои сервера. Cascade в регистрации: сначала проект → потом сервер. Смена проекта — через смену закреплённого сервера (гейт `multi_server`, с отдельным кодом ошибки `MULTI_PROJECT_REQUIRED` для UX-подсказки). Категории могут быть глобальными (`project_id NULL`) или проект-специфичными. Парсер выбирается через `projects.parser_source` — для Majestic это `lawsdb`, для GTA 5 RP — заготовка `gta5rp` (данные пока не подключены)
+- **Форматирование в заметках** — базовое B/I/U + маркированный список + очистка, через `contenteditable` и `document.execCommand`. Ctrl+B/I/U работают нативно. HTML санитайзится на бэке при snapshot: разрешены `b/strong/i/em/u/br/p/ul/ol/li/div/span`, вырезаются `<script>`/on*/javascript:. Старые plain-заметки переносятся через экранирование + `\n → <br>`
+- **F11 fullscreen отключён** во всех окнах — оверлей поверх игры не должен уходить в полноэкранный режим и терять alwaysOnTop. Реализовано универсально через `app.on('browser-window-created')` + `setFullScreenable(false)` + перехват F11/Alt+Enter в `before-input-event`
 - **Блокирующее окно «Тех. работы»** для обычных юзеров когда админ включил режим
 - **Бейдж подписки** на главной с фичами и сроком; helper `window.GosSubscription.hasFeature(key)` для гейта функций
 - Полное закрытие процесса по X (нет висящих в Task Manager)
@@ -199,9 +202,10 @@ D:\MVD Assistant\
 
 | Таблица | Что хранит |
 |---------|-----------|
-| `users` | id, email, username, password_hash, discord_id, avatar_url, role (user/admin/moderator), terms_accepted_at, terms_version, **locked_server_id**, **referral_code (UNIQUE, 8 chars)**, **referred_by_user_id**, **registration_ip**, **referral_redeemed (TINYINT, one-time)**, created_at, last_login |
-| `servers` | id (slug), name, color, icon, sort_order, is_active |
-| `categories` | id (slug), name, short_name, color, type (laws/rules/other), sort_order, is_active |
+| `users` | id, email, username, password_hash, discord_id, avatar_url, role (user/admin/moderator), terms_accepted_at, terms_version, **locked_server_id**, **locked_project_id**, **referral_code (UNIQUE, 8 chars)**, **referred_by_user_id**, **registration_ip**, **referral_redeemed (TINYINT, one-time)**, created_at, last_login |
+| `projects` | id (slug), name, description, color, icon, **parser_source** (`lawsdb`/`gta5rp`/NULL), sort_order, is_active — верхний уровень над серверами. Seed: `majestic` (active, parser=lawsdb) и `gta5rp` (inactive, parser=gta5rp) |
+| `servers` | id (slug), name, color, icon, sort_order, is_active, **project_id** (FK на projects) |
+| `categories` | id (slug), name, short_name, color, type (laws/rules/other), sort_order, is_active, **project_id** (NULL = глобальная, видна во всех проектах; иначе — только в конкретном проекте) |
 | `articles` | id, server_id, category_id, code, title, text, penalty, wanted_stars, sort_order |
 | `sessions` | Заготовка под JWT-сессии (пока не используется активно) |
 | `releases` | type (installer/portable), version, filename, original_name, size, **sha512**, notes, is_active, download_count |
@@ -222,7 +226,7 @@ D:\MVD Assistant\
 | `user_devices` | id, user_id, **hwid CHAR(64)** (SHA-256 от BIOS UUID+MAC+hostname), platform, first_ip, last_ip, first_seen, last_seen, UNIQUE (user_id, hwid). Накопительный учёт устройств для антифрод-проверки реферальных кодов. |
 
 **Важно:** есть авто-инициализация в `init-db.js` — при первом запуске сервера создаёт таблицы и заливает seed.
-**Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, и ALTER `users` добавляет `locked_server_id`, `referral_code` (UNIQUE), `referred_by_user_id`, `registration_ip`, `referral_redeemed`. Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д), провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
+**Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `binder_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, **`projects`** (+ seed majestic/gta5rp), и ALTER: `users` (`locked_server_id`, `locked_project_id`, `referral_code`, `referred_by_user_id`, `registration_ip`, `referral_redeemed`), `servers` (`project_id`, backfill в majestic), `categories` (`project_id NULL`). Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д) — оба с фичами `binder_unlimited`, `binder_share`; провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
 
 **Известная особенность Railway → MySQL → Query:** UI выполняет только ОДИН statement за раз и автоматически дописывает `LIMIT 100` к SELECT — запрос с `;` или своим `LIMIT` ломается. Если применяешь миграции вручную — разбивай на несколько запросов и не ставь `;` в конце SELECT.
 
@@ -233,11 +237,11 @@ D:\MVD Assistant\
 База: `/api`
 
 ### Auth (`/auth`) — rate-limit 20 req / 15 min
-- `POST /register` — `{ email, username, password, acceptTerms, serverId, referralCode? }` — **serverId обязателен** (закрепляется как locked_server_id). `referralCode` опциональный и **только информационный** — реальная активация реферала идёт через `/referrals/redeem` из приложения с HWID-проверкой. Бэк сохраняет `registration_ip` для антифрод-истории.
+- `POST /register` — `{ email, username, password, acceptTerms, serverId, projectId?, referralCode? }` — **serverId обязателен**. Если передан `projectId` — проверяется что сервер в этом проекте (иначе 400). `locked_project_id` устанавливается автоматически из `server.project_id`. `referralCode` опциональный и **только информационный** — реальная активация реферала идёт через `/referrals/redeem` из приложения с HWID-проверкой. Бэк сохраняет `registration_ip` для антифрод-истории.
 - `POST /login` — `{ email, password }` → JWT + user
 - `GET /me` — текущий пользователь (требует JWT) — возвращает `lockedServerId`
 - `PUT /me` — обновить username
-- `PUT /locked-server` — `{ serverId }` сменить закреплённый сервер. Если у юзера уже есть и он другой → требует фичу `multi_server`, иначе 403 `MULTI_SERVER_REQUIRED`
+- `PUT /locked-server` — `{ serverId }` сменить закреплённый сервер. `locked_project_id` синхронизируется автоматически из `server.project_id`. Если у юзера уже есть и он другой → требует фичу `multi_server`, иначе 403 с кодом `MULTI_SERVER_REQUIRED` (сменяется сервер в том же проекте) или `MULTI_PROJECT_REQUIRED` (сменяется проект — для более информативного UX)
 - `POST /change-password` — `{ currentPassword, newPassword }`
 - `POST /logout` / `POST /logout-all`
 - `GET /discord?app_callback=...` — старт Discord OAuth (опционально с callback на 127.0.0.1)
@@ -246,8 +250,15 @@ D:\MVD Assistant\
 - `POST /discord/unlink` — отвязать Discord
 - `GET /discord/status` — публичная диагностика конфигурации
 
+### Projects
+- `GET /projects` — публично, активные проекты (id, name, description, color, icon, parserSource, sortOrder)
+- `GET /projects/all` (admin) — все проекты, включая выключенные
+- `POST /projects` / `PUT /projects/:id` / `DELETE /projects/:id` (admin) — CRUD. DELETE запрещён если в проекте есть сервера
+
 ### Servers / Categories / Articles
 - Стандартные CRUD: `GET /`, `GET /all` (admin), `POST`, `PUT /:id`, `DELETE /:id`
+- `GET /servers?projectId=X` — фильтр по проекту. Возвращает `projectId` в каждой строке (для группировки на клиенте)
+- `GET /categories?projectId=X` — возвращает глобальные (`project_id NULL`) + категории конкретного проекта. Без параметра — только глобальные (fallback для лендинга)
 - `GET /articles?serverId=X&categoryId=Y` — **серверный гейт**: если у юзера есть Bearer-токен, нет `multi_server` и есть `locked_server_id` → бэк ПРИНУДИТЕЛЬНО подменяет `serverId` на `locked_server_id` (через `optionalAuth` + `effectiveLockedServer()` из `middleware/auth.js`). Чужие сервера невидимы.
 - `GET /articles/search?q=...` — то же поведение.
 
@@ -450,9 +461,11 @@ npm run dist
 # 5. Пользователи получат обновление автоматически через ~4 часа
 ```
 
-**Текущая версия приложения: 1.0.10** (бампать перед каждой сборкой)
+**Текущая версия приложения: 1.1.0** (бампать перед каждой сборкой)
 
-Изменения 1.0.10: **Биндер макросов** — глобальные хоткеи + эмуляция ввода через `@nut-tree-fork/nut-js`, детект GTA 5 в фокусе через `active-win`, share-by-code (фича `binder_share`), безлимит макросов (`binder_unlimited`), оверлей-шпаргалка на 9 позициях.
+Изменения 1.1.0: **Проекты (мультипроектность)** — верхний уровень над серверами (Majestic RP + заготовка GTA 5 RP), cascade в регистрации, dropdown проекта в приложении. **Форматирование в заметках** (B/I/U + списки) через contenteditable + HTML-санитайзер на бэке. **F11 fullscreen отключён** во всех окнах. AI-ассистент: фикс регекса — теперь распознаёт `12.8 ч.1` / `12.8.1` / `12.8 ч.2` в БД Majestic-парсера.
+
+Изменения 1.0.10: **Биндер макросов** — глобальные хоткеи + эмуляция ввода через `@nut-tree-fork/nut-js`, детект GTA 5 в фокусе через `active-win`, share-by-code (фича `binder_share`), безлимит макросов (`binder_unlimited`), оверлей-шпаргалка на 9 позициях. В UI **временно скрыт** до финального релиза.
 
 Изменения 1.0.7: HWID-based реферальная программа, доменный переезд на `gosassistent.su`, AI таймаут клиента 120с, фикс мерцания при возврате с оплаты, индикатор обрезанного AI-ответа.
 
@@ -659,6 +672,33 @@ window.GosAPI.subscription.onChange((sub) => { ... })  // слушатель и�
 - **История платежей** — таблица с фильтрами status/provider/search. Pending платежи можно подтвердить или отменить вручную. Для каждого видна ссылка confirmation_url (если есть).
 
 **Frontend `/pricing.html`** — публичная страница тарифов. Тянет `/subscriptions/plans/public`. При клике «Купить» гость отправляется на /login.html (с `gos_buy_intent` в sessionStorage чтобы вернуться к покупке после входа), залогиненный — открывает модалку выбора провайдера → редирект на confirmationUrl.
+
+---
+
+## 🌐 Проекты (мультипроектность)
+
+**Идея:** над серверами появился уровень «проект» — Majestic RP, GTA 5 RP и т.д. У каждого проекта свои сервера и свои категории (или общие категории, если `project_id NULL`). Пользователь закреплён за одним проектом (`locked_project_id`) — по умолчанию это Majestic. Смена проекта = смена закреплённого сервера в сервер другого проекта, гейтится через фичу `multi_server`.
+
+**БД:** `projects` таблица (id slug, name, description, color, icon, `parser_source`, sort_order, is_active). Seed: `majestic` (active, parser=`lawsdb`) и `gta5rp` (inactive, parser=`gta5rp`, источник данных не подключён). `servers.project_id` — обязательная привязка. `categories.project_id NULL` = глобальная. `users.locked_project_id` — синхронизируется автоматически при смене сервера.
+
+**Парсеры:** [`backend/parsers/index.js`](backend/parsers/index.js) содержит `PARSER_REGISTRY = { lawsdb, gta5rp }` — ключ равен `projects.parser_source`. Функция `getProjectParser(parserSource)` возвращает модуль. Для GTA 5 RP модуль ([`parsers/gta5rp.js`](backend/parsers/gta5rp.js)) — заглушка, все методы кидают `PARSER_NOT_CONFIGURED` до появления реального источника.
+
+**API:**
+- `GET /api/projects` — публично, список активных
+- `GET /api/projects/all` (admin) — с выключенными
+- `POST/PUT/DELETE /api/projects` (admin)
+- `GET /api/servers?projectId=X` — фильтр по проекту
+- `GET /api/categories?projectId=X` — глобальные + проектные
+
+**Регистрация ([`login.html`](frontend/login.html) + [`auth.js`](frontend/js/auth.js)):** cascade проект → сервер. Если активен только один проект — селектор проекта скрывается автоматом (`display:none`), UX остаётся прежним для существующих юзеров Majestic.
+
+**Кабинет ([`cabinet.html`](frontend/cabinet.html) + [`cabinet.js`](frontend/js/cabinet.js)):** блок «Игровой проект и сервер» на вкладке Профиль с кнопкой «Сменить», модалка с cascade project → server. Ошибки обрабатываются: `MULTI_PROJECT_REQUIRED` → «Смена проекта — с подпиской Lite или Premium», `MULTI_SERVER_REQUIRED` → «Смена сервера — с подпиской».
+
+**Приложение ([`src/index.html`](../MVD Assistant/src/index.html) + [`main-window.js`](../MVD Assistant/src/js/main-window.js)):** карточка «Проект» над карточкой «Сервер», скрытая (`display:none`) если активных проектов < 2. `loadProjects()` тянет `/api/projects`, `applyProjectFilter()` отбирает сервера по `user.lockedProjectId`, `switchProject()` вызывает `auth.setLockedServer` на первый доступный сервер нового проекта — бэк синхронизирует и `locked_project_id`.
+
+**Админка ([`admin.html`](frontend/admin.html)):** вкладка «Проекты» с CRUD (id/name/icon/color/parser_source/description/sortOrder/isActive), колонка «Проект» в таблицах серверов и категорий, селектор проекта в модалках сервера и категории. У категории — опция «Глобальная (во всех проектах)».
+
+**Существующие юзеры** (миграционный случай): `locked_project_id` дозаполняется из `locked_server_id → server.project_id` в `init-db.js`. Если `locked_server_id IS NULL` — проект остаётся NULL (backward-compat).
 
 ---
 

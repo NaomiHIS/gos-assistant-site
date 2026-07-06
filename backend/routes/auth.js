@@ -251,17 +251,25 @@ router.put('/locked-server', requireAuth, async (req, res) => {
     const srv = await db.queryOne('SELECT id, project_id AS projectId FROM servers WHERE id = ? AND is_active = 1', [serverId]);
     if (!srv) return res.status(400).json({ success: false, error: 'Сервер не найден' });
 
-    // Если у юзера уже есть закреплённый и он другой — требуем multi_server
-    const u = await db.queryOne('SELECT locked_server_id FROM users WHERE id = ?', [req.user.id]);
+    // Если у юзера уже есть закреплённый и он другой — требуем multi_server.
+    // Дополнительно: если меняется ПРОЕКТ (а не только сервер внутри одного) —
+    // отдаём отдельный код MULTI_PROJECT_REQUIRED для более информативного сообщения.
+    const u = await db.queryOne(
+      'SELECT locked_server_id, locked_project_id FROM users WHERE id = ?',
+      [req.user.id]
+    );
     if (u && u.locked_server_id && u.locked_server_id !== serverId) {
       const { loadCurrentSubscription } = require('./subscriptions');
       const sub = await loadCurrentSubscription(req.user.id);
       const hasMulti = sub && Array.isArray(sub.plan.features) && sub.plan.features.includes('multi_server');
       if (!hasMulti) {
+        const changingProject = u.locked_project_id && srv.projectId && u.locked_project_id !== srv.projectId;
         return res.status(403).json({
           success: false,
-          error: 'Смена закреплённого сервера доступна с подпиской Lite или Premium',
-          code: 'MULTI_SERVER_REQUIRED',
+          error: changingProject
+            ? 'Смена игрового проекта доступна с подпиской Lite или Premium'
+            : 'Смена закреплённого сервера доступна с подпиской Lite или Premium',
+          code: changingProject ? 'MULTI_PROJECT_REQUIRED' : 'MULTI_SERVER_REQUIRED',
         });
       }
     }
