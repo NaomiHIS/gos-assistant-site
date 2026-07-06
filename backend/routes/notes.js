@@ -13,6 +13,24 @@ function generateCode(len = 8) {
   return out;
 }
 
+// Санитайзер HTML контента заметок — оставляем только форматирование, никаких скриптов.
+// Не полноценный DOMPurify, но защищает от <script>, on*-атрибутов и javascript:-урлов
+// при передаче чужого биндера/заметки на клиент импортёра.
+const NOTE_ALLOWED_TAGS = /^(b|strong|i|em|u|br|p|ul|ol|li|div|span)$/i;
+function sanitizeNoteHtml(html) {
+  if (!html) return '';
+  let s = String(html);
+  // Удаляем весь <script>...</script>, <style>...</style>, <iframe>, <object>, <embed>
+  s = s.replace(/<(script|style|iframe|object|embed|link|meta)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+  s = s.replace(/<(script|style|iframe|object|embed|link|meta)\b[^>]*\/?>/gi, '');
+  // Убираем on*-атрибуты и javascript:-урлы
+  s = s.replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  s = s.replace(/(href|src)\s*=\s*(?:"javascript:[^"]*"|'javascript:[^']*'|javascript:[^\s>]+)/gi, '');
+  // Оставляем только разрешённые теги — все остальные срезаем
+  s = s.replace(/<\/?([a-z][a-z0-9]*)\b[^>]*>/gi, (m, tag) => (NOTE_ALLOWED_TAGS.test(tag) ? m : ''));
+  return s.slice(0, 20000);
+}
+
 function parseSnapshot(raw) {
   if (raw == null) return [];
   if (Array.isArray(raw)) return raw;
@@ -73,7 +91,7 @@ router.put('/share/snapshot', requireAuth, async (req, res) => {
     const cleaned = notes.slice(0, 1000).map((n) => ({
       id: n && n.id ? String(n.id).slice(0, 64) : null,
       title: n && n.title ? String(n.title).slice(0, 200) : '',
-      content: n && n.content ? String(n.content).slice(0, 20000) : '',
+      content: n && n.content ? sanitizeNoteHtml(n.content) : '',
       createdAt: n && n.createdAt ? String(n.createdAt).slice(0, 32) : null,
       updatedAt: n && n.updatedAt ? String(n.updatedAt).slice(0, 32) : null,
     })).filter((n) => n.title || n.content);

@@ -16,6 +16,7 @@ function userPublic(u) {
     avatar: u.avatar_url || null,
     discordId: u.discord_id || null,
     lockedServerId: u.locked_server_id || null,
+    lockedProjectId: u.locked_project_id || null,
   };
 }
 
@@ -115,7 +116,7 @@ async function exchangeCodeForUser(code) {
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
   try {
-    const { email, username, password, acceptTerms, serverId, referralCode } = req.body || {};
+    const { email, username, password, acceptTerms, projectId, serverId, referralCode } = req.body || {};
     if (!email || !username || !password) {
       return res.status(400).json({ success: false, error: 'Все поля обязательны' });
     }
@@ -135,11 +136,18 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Выберите свой сервер' });
     }
 
-    // Проверяем существование и активность сервера
-    const srv = await db.queryOne('SELECT id FROM servers WHERE id = ? AND is_active = 1', [serverId]);
+    // Проверяем сервер + подтягиваем project_id. Если клиент прислал projectId — он должен совпадать.
+    const srv = await db.queryOne(
+      'SELECT id, project_id AS projectId FROM servers WHERE id = ? AND is_active = 1',
+      [serverId]
+    );
     if (!srv) {
       return res.status(400).json({ success: false, error: 'Сервер не найден' });
     }
+    if (projectId && srv.projectId && projectId !== srv.projectId) {
+      return res.status(400).json({ success: false, error: 'Сервер не принадлежит выбранному проекту' });
+    }
+    const finalProjectId = srv.projectId || projectId || 'majestic';
 
     const exists = await db.queryOne('SELECT id FROM users WHERE email = ?', [email]);
     if (exists) {
@@ -150,9 +158,9 @@ router.post('/register', async (req, res) => {
     const { extractIp } = require('./referrals');
     const regIp = extractIp(req);
     const result = await db.query(
-      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id, registration_ip)
-       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?)`,
-      [email, username, hash, 'user', TERMS_VERSION, serverId, regIp || null]
+      `INSERT INTO users (email, username, password_hash, role, terms_accepted_at, terms_version, locked_server_id, locked_project_id, registration_ip)
+       VALUES (?, ?, ?, ?, NOW(), ?, ?, ?, ?)`,
+      [email, username, hash, 'user', TERMS_VERSION, serverId, finalProjectId, regIp || null]
     );
 
     // Реферальная программа теперь активируется только из приложения через HWID-проверку.
@@ -202,7 +210,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   // Re-fetch full row to include created_at, etc.
   const u = await db.queryOne(
-    'SELECT id, email, username, role, avatar_url, discord_id, locked_server_id, created_at, last_login FROM users WHERE id = ?',
+    'SELECT id, email, username, role, avatar_url, discord_id, locked_server_id, locked_project_id, created_at, last_login FROM users WHERE id = ?',
     [req.user.id]
   );
   if (!u) return res.status(404).json({ success: false, error: 'Not found' });
@@ -240,7 +248,7 @@ router.put('/locked-server', requireAuth, async (req, res) => {
     const { serverId } = req.body || {};
     if (!serverId) return res.status(400).json({ success: false, error: 'serverId обязателен' });
 
-    const srv = await db.queryOne('SELECT id FROM servers WHERE id = ? AND is_active = 1', [serverId]);
+    const srv = await db.queryOne('SELECT id, project_id AS projectId FROM servers WHERE id = ? AND is_active = 1', [serverId]);
     if (!srv) return res.status(400).json({ success: false, error: 'Сервер не найден' });
 
     // Если у юзера уже есть закреплённый и он другой — требуем multi_server
@@ -258,7 +266,12 @@ router.put('/locked-server', requireAuth, async (req, res) => {
       }
     }
 
-    await db.query('UPDATE users SET locked_server_id = ? WHERE id = ?', [serverId, req.user.id]);
+    // При смене сервера синхронизируем locked_project_id — иначе юзер окажется на сервере
+    // из другого проекта, а фильтр останется старым.
+    await db.query(
+      'UPDATE users SET locked_server_id = ?, locked_project_id = ? WHERE id = ?',
+      [serverId, srv.projectId || 'majestic', req.user.id]
+    );
     const full = await db.queryOne('SELECT * FROM users WHERE id = ?', [req.user.id]);
     res.json({ success: true, user: userPublic(full) });
   } catch (err) {

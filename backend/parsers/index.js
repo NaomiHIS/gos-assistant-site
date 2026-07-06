@@ -70,4 +70,20 @@ function parseRawText(text) {
   };
 }
 
-module.exports = { parseUrl, parseRawText, codexdb, lawsdb };
+// ============================================================
+// Реестр парсеров по проектам. Ключ — projects.parser_source.
+// Каждый парсер знает как импортировать законы для конкретного проекта.
+// Для нового проекта — добавить сюда модуль, парсер должен экспортировать
+// как минимум `getStructure()`, `syncStatus()` и одну из import-функций.
+// ============================================================
+const PARSER_REGISTRY = {
+  lawsdb,       // majestic RP (alamantik/majestic-laws-db)
+  // 'gta5rp': require('./gta5rp'),  ← добавить когда появится
+};
+
+function getProjectParser(parserSource) {
+  if (!parserSource) return null;
+  return PARSER_REGISTRY[parserSource] || null;
+}
+
+module.exports = { parseUrl, parseRawText, codexdb, lawsdb, getProjectParser, PARSER_REGISTRY };

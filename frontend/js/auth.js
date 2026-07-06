@@ -90,16 +90,48 @@
   }
 
   setMode(mode);
-  loadServers();
+  loadProjects();
 
-  async function loadServers() {
+  async function loadProjects() {
+    const projectSel = $('reg-project');
+    const projectGroup = $('reg-project-group');
+    if (!projectSel) return;
+    try {
+      const res = await fetch(window.GosClient.API_BASE + '/projects').then((r) => r.json());
+      const list = (res && res.projects) || [];
+      if (!list.length) {
+        projectSel.innerHTML = '<option value="">Проекты недоступны</option>';
+        return;
+      }
+      projectSel.innerHTML = '<option value="">— Выберите проект —</option>' +
+        list.map((p) => `<option value="${p.id}">${p.name}</option>`).join('');
+      // Один активный проект → авто-выбор и скрываем селектор
+      if (list.length === 1 && projectGroup) {
+        projectSel.value = list[0].id;
+        projectGroup.style.display = 'none';
+        await loadServersForProject(list[0].id);
+      }
+      projectSel.addEventListener('change', () => loadServersForProject(projectSel.value));
+    } catch {
+      projectSel.innerHTML = '<option value="">Не удалось загрузить проекты</option>';
+    }
+  }
+
+  async function loadServersForProject(projectId) {
     const select = $('reg-server');
     if (!select) return;
+    if (!projectId) {
+      select.disabled = true;
+      select.innerHTML = '<option value="">Сначала выберите проект</option>';
+      return;
+    }
+    select.disabled = false;
+    select.innerHTML = '<option value="">Загрузка серверов…</option>';
     try {
-      const res = await fetch(window.GosClient.API_BASE + '/servers').then((r) => r.json());
+      const res = await fetch(window.GosClient.API_BASE + '/servers?projectId=' + encodeURIComponent(projectId)).then((r) => r.json());
       const list = Array.isArray(res) ? res : (res.servers || []);
       if (!list.length) {
-        select.innerHTML = '<option value="">Серверы пока недоступны</option>';
+        select.innerHTML = '<option value="">В этом проекте нет серверов</option>';
         return;
       }
       select.innerHTML = '<option value="">— Выберите сервер —</option>' +
@@ -178,6 +210,7 @@
     const password = $('reg-password').value;
     const password2 = $('reg-password2').value;
     const acceptTerms = $('reg-accept-terms').checked;
+    const projectId = ($('reg-project') && $('reg-project').value) || null;
     const serverId = $('reg-server').value;
 
     if (password !== password2) {
@@ -186,6 +219,10 @@
     }
     if (!acceptTerms) {
       showError('Необходимо принять Условия использования и Политику конфиденциальности');
+      return;
+    }
+    if (!projectId) {
+      showError('Выберите проект');
       return;
     }
     if (!serverId) {
@@ -199,7 +236,7 @@
 
     try {
       const referralCode = getStickyRef();
-      const data = await window.GosClient.auth.register(email, username, password, acceptTerms, serverId, referralCode);
+      const data = await window.GosClient.auth.register(email, username, password, acceptTerms, serverId, referralCode, projectId);
       if (data.success) {
         window.GosClient.setToken(data.token);
         window.GosClient.setUser(data.user);

@@ -77,8 +77,8 @@
 
     auth: {
       login: (email, password) => request('POST', '/auth/login', { email, password }),
-      register: (email, username, password, acceptTerms, serverId, referralCode) =>
-        request('POST', '/auth/register', { email, username, password, acceptTerms, serverId, referralCode: referralCode || null }),
+      register: (email, username, password, acceptTerms, serverId, referralCode, projectId) =>
+        request('POST', '/auth/register', { email, username, password, acceptTerms, serverId, projectId: projectId || null, referralCode: referralCode || null }),
       me: () => request('GET', '/auth/me'),
       logout: () => request('POST', '/auth/logout'),
       logoutAll: () => request('POST', '/auth/logout-all'),

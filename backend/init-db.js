@@ -295,6 +295,55 @@ async function runMigrations() {
     `);
     console.log('[InitDB] ✓ binder_shares ensured');
 
+    // ============================================================
+    // Projects: верхний уровень над серверами (Majestic RP, GTA 5 RP, ...)
+    // Сервер принадлежит одному проекту, категория может быть глобальной (project_id NULL)
+    // или привязанной к проекту.
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id VARCHAR(64) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT NULL,
+        color VARCHAR(16) NOT NULL DEFAULT '#DF005B',
+        icon VARCHAR(16) NOT NULL DEFAULT 'GP',
+        sort_order INT NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        parser_source VARCHAR(64) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    // Seed основного проекта — под все существующие сервера/категории
+    await db.query(
+      `INSERT IGNORE INTO projects (id, name, description, color, icon, parser_source, sort_order)
+       VALUES ('majestic', 'Majestic RP', 'Основной проект — все сервера Majestic RP', '#DF005B', 'MJ', 'lawsdb', 1)`
+    );
+    // Заготовка для GTA 5 RP (не активна, парсер добавим позже)
+    await db.query(
+      `INSERT IGNORE INTO projects (id, name, description, color, icon, parser_source, sort_order, is_active)
+       VALUES ('gta5rp', 'GTA 5 RP', 'Проект GTA 5 RP (в разработке)', '#7B2BFF', 'G5', NULL, 2, 0)`
+    );
+
+    // ALTER: привязка серверов к проекту
+    await ensureColumn('servers', 'project_id', "VARCHAR(64) NULL");
+    // Все существующие сервера — в проект majestic (backward compat)
+    await db.query(`UPDATE servers SET project_id = 'majestic' WHERE project_id IS NULL`);
+
+    // ALTER: привязка категорий к проекту (NULL = глобальная, видна во всех проектах)
+    await ensureColumn('categories', 'project_id', "VARCHAR(64) NULL");
+
+    // ALTER: закреплённый проект у пользователя
+    await ensureColumn('users', 'locked_project_id', "VARCHAR(64) NULL");
+    // Дозаполним для существующих пользователей — если сервер закреплён, вычислим проект по нему
+    await db.query(`
+      UPDATE users u
+        JOIN servers s ON s.id = u.locked_server_id
+        SET u.locked_project_id = s.project_id
+      WHERE u.locked_project_id IS NULL AND u.locked_server_id IS NOT NULL
+    `).catch(() => {}); // тихо игнорируем если нет данных
+    console.log('[InitDB] ✓ projects ensured (with servers/categories/users migration)');
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
