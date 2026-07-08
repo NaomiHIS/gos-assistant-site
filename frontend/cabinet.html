@@ -107,6 +107,15 @@
             <div class="text-xs text-muted mt-2">Смена сервера в другой проект — с подпиской Lite или Premium.</div>
           </div>
 
+          <div class="input-group">
+            <label class="input-label">Активировать промокод</label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="input" id="promo-input" placeholder="Введите код" style="flex:1;font-family:ui-monospace,monospace;letter-spacing:0.05em;text-transform:uppercase" maxlength="32" autocomplete="off" />
+              <button class="btn btn-primary" id="btn-redeem-promo">Активировать</button>
+            </div>
+            <div class="text-xs text-muted mt-2" id="promo-hint">Промокод даст подписку — план и срок настроены при создании кода.</div>
+          </div>
+
           <button class="btn btn-primary" id="btn-save-profile">Сохранить изменения</button>
         </div>
       </div>

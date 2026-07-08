@@ -71,6 +71,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
           <span>Подписки</span>
         </div>
+        <div class="admin-nav-item" data-view="promo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 13.41 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+          <span>Промокоды</span>
+        </div>
         <div class="admin-nav-item" data-view="payments">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
           <span>Платежи</span>
@@ -348,6 +352,28 @@
               </tr>
             </thead>
             <tbody id="releases-table"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PROMO CODES -->
+      <div class="view hidden" data-view="promo">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">Промокоды</div>
+            <div class="admin-subtitle">Выдача подписок по коду. Один код — одна активация на пользователя.</div>
+          </div>
+          <button class="btn btn-primary" data-modal="promo">+ Создать промокод</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Код</th><th>План</th><th>Дней</th><th>Использовано</th>
+                <th>Действует до</th><th>Статус</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="promo-table"></tbody>
           </table>
         </div>
       </div>
@@ -1033,6 +1059,60 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" data-close>Отмена</button>
         <button class="btn btn-primary" id="prj-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Promo code modal -->
+  <div class="modal-backdrop" id="modal-promo">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-promo-title">Новый промокод</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group"><label class="input-label">Код (оставь пустым — сгенерируется)</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" class="input" id="promo-code" placeholder="PROMO2026" style="flex:1;font-family:ui-monospace,monospace;letter-spacing:0.05em" maxlength="32" />
+            <button class="btn btn-secondary" id="promo-gen-btn" type="button">Сгенерировать</button>
+          </div>
+        </div>
+        <div class="input-group"><label class="input-label">План подписки</label>
+          <select class="input select" id="promo-plan"><option value="">Загрузка…</option></select>
+        </div>
+        <div class="input-group"><label class="input-label">Длительность подписки, дней</label>
+          <input type="number" class="input" id="promo-days" min="1" max="3650" value="30" />
+        </div>
+        <div class="input-group"><label class="input-label">Макс. активаций (пусто = безлимит)</label>
+          <input type="number" class="input" id="promo-max-uses" min="1" placeholder="10" />
+        </div>
+        <div class="input-group"><label class="input-label">Действует с (пусто = сразу)</label>
+          <input type="datetime-local" class="input" id="promo-starts-at" />
+        </div>
+        <div class="input-group"><label class="input-label">Действует до (пусто = бессрочно)</label>
+          <input type="datetime-local" class="input" id="promo-expires-at" />
+        </div>
+        <div class="input-group"><label class="input-label">Заметка (для админа)</label>
+          <textarea class="input textarea" id="promo-notes" placeholder="Например: для стримера X" maxlength="500"></textarea>
+        </div>
+        <div class="input-group"><label class="input-label"><input type="checkbox" id="promo-active" checked /> Активен</label></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Отмена</button>
+        <button class="btn btn-primary" id="promo-save">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Promo redemptions modal -->
+  <div class="modal-backdrop" id="modal-promo-uses">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title">История активаций</div>
+        <button class="modal-close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div id="promo-uses-body" style="max-height:400px;overflow-y:auto"></div>
       </div>
     </div>
   </div>

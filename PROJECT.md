@@ -222,11 +222,13 @@ D:\MVD Assistant\
 | `site_contacts` | Single-row (id=1): owner_name, owner_role, about, avatar_url, email, telegram, discord, vk, github, website, **custom_links (JSON)**, updated_by, updated_at |
 | `note_shares` | user_id (PK), **code (UNIQUE 8 chars)**, snapshot (JSON массив заметок), notes_count, updated_at — для share-by-code |
 | `binder_shares` | user_id (PK), **code (UNIQUE 8 chars)**, snapshot (JSON массив макросов), macros_count, updated_at — для share-by-code биндера. Создаётся лениво только если у юзера есть фича `binder_share` |
+| `promo_codes` | id, **code (UNIQUE)**, plan_id (FK), duration_days, max_uses NULL (безлимит), uses_count, starts_at NULL, expires_at NULL, is_active, created_by, notes, created_at — админские промокоды на подписку |
+| `promo_redemptions` | id, promo_code_id, user_id, granted_subscription_id, redeemed_at, **UNIQUE (promo_code_id, user_id)** — один код можно активировать один раз на юзера |
 | `referrals` | id, referrer_user_id, referee_user_id (UNIQUE), referee_ip, referee_user_agent, status (granted/blocked), block_reason, **redeem_source (web/app)**, **redeem_hwid**, referrer_reward_days, referee_reward_days, created_at — журнал реферальных активаций (включая blocked-попытки для антифрод-аудита) |
 | `user_devices` | id, user_id, **hwid CHAR(64)** (SHA-256 от BIOS UUID+MAC+hostname), platform, first_ip, last_ip, first_seen, last_seen, UNIQUE (user_id, hwid). Накопительный учёт устройств для антифрод-проверки реферальных кодов. |
 
 **Важно:** есть авто-инициализация в `init-db.js` — при первом запуске сервера создаёт таблицы и заливает seed.
-**Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `binder_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, **`projects`** (+ seed majestic/gta5rp), и ALTER: `users` (`locked_server_id`, `locked_project_id`, `referral_code`, `referred_by_user_id`, `registration_ip`, `referral_redeemed`), `servers` (`project_id`, backfill в majestic), `categories` (`project_id NULL`). Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д) — оба с фичами `binder_unlimited`, `binder_share`; провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
+**Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `binder_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, **`projects`** (+ seed majestic/gta5rp), **`promo_codes`** + **`promo_redemptions`**, и ALTER: `users` (`locked_server_id`, `locked_project_id`, `referral_code`, `referred_by_user_id`, `registration_ip`, `referral_redeemed`), `servers` (`project_id`, backfill в majestic), `categories` (`project_id NULL`). Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д) — оба с фичами `binder_unlimited`, `binder_share`; провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
 
 **Известная особенность Railway → MySQL → Query:** UI выполняет только ОДИН statement за раз и автоматически дописывает `LIMIT 100` к SELECT — запрос с `;` или своим `LIMIT` ломается. Если применяешь миграции вручную — разбивай на несколько запросов и не ставь `;` в конце SELECT.
 
@@ -316,6 +318,14 @@ D:\MVD Assistant\
 - `GET /payments/:id/check` (auth — владелец платежа или admin) — **fallback polling**: бэк идёт в API провайдера (YooKassa `GET /v3/payments/{id}` или Robokassa `OpStateExt`), при `succeeded` выдаёт подписку через единый `finalizePayment()` helper. Идемпотентно. Дёргается фронтом из cabinet.html при возврате с оплаты (`?paid=...`) 6 раз с возрастающей паузой — страховка от потерянных webhook'ов.
 - `router.all('/payments/webhook/:slug')` — без auth, поддерживает и POST (YooKassa, Robokassa-POST) и GET (Robokassa-GET). Тело берётся из `req.body ∪ req.query`. Адаптер сам валидирует подпись/IP. При `parsed.webhookResponse` возвращается plain-text (для Robokassa нужен `OK<InvId>`).
 - Admin: `GET /payments/all` (фильтры status/providerSlug/search), `PUT /payments/:id/mark` (вручную подтвердить/отменить), `GET/POST/PUT/DELETE /payments/providers[/:id]`
+
+### Promo codes
+- `POST /promo/redeem` (auth) — `{ code }` активировать промокод. Валидация: код существует, `is_active`, `starts_at` наступил, `expires_at` не истёк, `uses_count < max_uses`, юзер этот код ещё не активировал. Выдача через `extendOrGrantBySlug` (стек если тот же план, замена если другой). UNIQUE `(promo_code_id, user_id)` защищает от гонки. Возвращает `{ subscription, planName, grantedDays }`
+- `GET /promo` (admin) — список всех промокодов с планом и количеством использований
+- `POST /promo` (admin) — `{ code?, planId, durationDays, maxUses?, startsAt?, expiresAt?, isActive?, notes? }`. Если `code` пустой — генерируется 8 символов из алфавита без визуально похожих
+- `PUT /promo/:id` (admin) — обновить (нельзя менять code и plan_id — только длительность/лимиты/сроки/статус/notes)
+- `DELETE /promo/:id` (admin) — каскадно удаляет `promo_redemptions`
+- `GET /promo/:id/redemptions` (admin) — история активаций с email/username юзеров
 
 ### Referrals
 - `GET /referrals/me` (auth) — лениво создаёт `referral_code` (8 chars, алфавит без визуально похожих), возвращает `{ code, myRedeemed, stats: {total, granted, blocked, totalDays}, referrals: [...], programDescription }`
@@ -800,6 +810,36 @@ binder.onChange((state) => { ... })
 ```
 
 **Известная особенность сборки:** `@nut-tree-fork/nut-js` и `active-win` — нативные модули, требуют распаковки из asar. В [`electron-builder.yml`](../MVD Assistant/electron-builder.yml) → `asarUnpack` добавлено для путей `node_modules/@nut-tree-fork/**/*`, `@nut-tree`, `libnut-*`, `active-win/**/*`. Для сборки на машине разработчика нужны Visual Studio Build Tools (для C++ компиляции libnut). Если nut.js не загрузился (ошибка установки) — UI показывает баннер «Модуль ввода не загружен» и блокирует выполнение макросов.
+
+---
+
+## 🎟 Промокоды
+
+**Идея:** админ создаёт промокод в админ-панели → указывает план и срок (7/14/30/90 дней или произвольно). Юзер вводит код на сайте (кабинет) или в приложении (настройки) — получает подписку соответствующего плана. Один код можно активировать один раз на юзера (`UNIQUE (promo_code_id, user_id)`), но кодом могут воспользоваться несколько юзеров (до `max_uses` или безлимитно).
+
+**Схема** (см. таблицы `promo_codes` и `promo_redemptions` выше).
+
+**Логика выдачи ([`routes/promo.js`](backend/routes/promo.js)):**
+1. Юзер вводит код → нормализация (`.toUpperCase()`, только `A-Z0-9`)
+2. Ищем в `promo_codes` → проверяем `is_active`, `starts_at`, `expires_at`, `max_uses > uses_count`
+3. Проверяем что юзер этот код ещё не активировал (`promo_redemptions` уникальность)
+4. Вызываем `extendOrGrantBySlug({ userId, planSlug, days: duration_days })` — **если у юзера уже активен тот же план, ПРОДЛЕВАЕТ** его от `max(now, expires_at)`. Если активен другой план — заменяет. Стекает как реферальные бонусы.
+5. Пишем в `promo_redemptions` + `uses_count += 1` (транзакционно защищено `ER_DUP_ENTRY`)
+
+**Админка ([`admin.html`](frontend/admin.html) → вкладка «Промокоды»):**
+- Таблица с колонками: код, план, дней, использовано (`N/M` или `N/∞`, кликабельно → история), действует до, статус (Активен / Ждёт старта / Истёк / Использован / Выкл)
+- Кнопка «Копировать» рядом с каждым кодом
+- Модалка создания: код (или сгенерировать 8 символов), план (select из активных), длительность (дней), max_uses (пусто = ∞), starts_at, expires_at, notes, чекбокс «Активен»
+- Модалка «История активаций»: список email/username юзеров + даты
+
+**Кабинет (`/cabinet.html` → Профиль):** блок «Активировать промокод» — поле ввода с auto-uppercase + кнопка «Активировать». Ответ в подсказке снизу: `Активирован план «Premium» на 30 дн.` (зелёный) или ошибка (красный).
+
+**Приложение (Настройки → «Промокод»):** тот же UX через `window.GosAPI.promo.redeem(code)` → IPC `promo:redeem` → бэк. После успеха вызывается `subscription.refresh()` — карточка подписки на главной обновляется автоматически.
+
+**Известные особенности:**
+- Код регистронезависим (`aBc123` = `ABC123`), пробелы/дефисы вырезаются автоматически
+- Промокод НЕ работает как одноразовый купон для всех — это именно «один код можно раздать 10 юзерам, каждый активирует один раз»
+- Для одноразового кода на одного юзера — просто ставь `max_uses = 1`
 
 ---
 

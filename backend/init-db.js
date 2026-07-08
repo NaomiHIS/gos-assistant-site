@@ -345,6 +345,42 @@ async function runMigrations() {
     `).catch(() => {}); // тихо игнорируем если нет данных
     console.log('[InitDB] ✓ projects ensured (with servers/categories/users migration)');
 
+    // ============================================================
+    // Promo codes: код → подписка на N дней. Одноразовая активация на юзера,
+    // но кодом могут воспользоваться несколько юзеров (до max_uses).
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        code VARCHAR(32) NOT NULL UNIQUE,
+        plan_id INT NOT NULL,
+        duration_days INT NOT NULL,
+        max_uses INT NULL,
+        uses_count INT NOT NULL DEFAULT 0,
+        starts_at TIMESTAMP NULL,
+        expires_at TIMESTAMP NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_by INT NULL,
+        notes TEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_code (code),
+        INDEX idx_active (is_active, expires_at)
+      ) ENGINE=InnoDB
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS promo_redemptions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        promo_code_id INT NOT NULL,
+        user_id INT NOT NULL,
+        granted_subscription_id INT NULL,
+        redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_promo_user (promo_code_id, user_id),
+        INDEX idx_user (user_id, redeemed_at)
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] ✓ promo_codes + promo_redemptions ensured');
+
     await db.query(`
       CREATE TABLE IF NOT EXISTS support_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,

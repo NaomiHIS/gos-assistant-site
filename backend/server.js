@@ -51,6 +51,7 @@ app.use('/api/contacts', require('./routes/contacts'));
 app.use('/api/notes', require('./routes/notes'));
 app.use('/api/binder', require('./routes/binder'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/promo', require('./routes/promo'));
 app.use('/api/referrals', require('./routes/referrals'));
 
 // Health check

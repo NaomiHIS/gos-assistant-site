@@ -77,6 +77,7 @@
     if (name === 'dashboard') renderDashboard();
     if (name === 'projects') renderProjectsTable();
     if (name === 'servers') renderServersTable();
+    if (name === 'promo') initPromoView();
     if (name === 'categories') renderCategoriesTable();
     if (name === 'articles') renderArticlesTable();
     if (name === 'users') loadAndRenderUsers();
@@ -113,6 +114,7 @@
     if (name === 'server') prepareServerModal(data);
     if (name === 'project') prepareProjectModal(data);
     if (name === 'category') prepareCategoryModal(data);
+    if (name === 'promo') preparePromoModal(data);
     if (name === 'article') prepareArticleModal(data);
     if (name === 'donate') {
       openDonateModal(data);
@@ -1683,6 +1685,217 @@
     pollTimer: null,
     pollInflight: false,
   };
+
+  // ============================================================
+  // Promo codes
+  // ============================================================
+  const PromoState = { promos: [], plans: [], initialized: false };
+
+  async function initPromoView() {
+    await Promise.all([loadPromos(), loadPromoPlans()]);
+    if (PromoState.initialized) return;
+    PromoState.initialized = true;
+    setupPromoActions();
+  }
+
+  async function loadPromos() {
+    try {
+      const token = window.GosClient.getToken();
+      const res = await fetch(window.GosClient.API_BASE + '/promo', {
+        headers: { Authorization: 'Bearer ' + token },
+      }).then((r) => r.json());
+      PromoState.promos = (res && res.promos) || [];
+      renderPromoTable();
+    } catch (err) { toast('Ошибка загрузки промокодов: ' + err.message); }
+  }
+
+  async function loadPromoPlans() {
+    try {
+      const res = await window.GosClient.subscriptions.listPlans();
+      PromoState.plans = (res && res.plans) || [];
+    } catch { PromoState.plans = []; }
+  }
+
+  function fmtDate(v) {
+    if (!v) return '—';
+    try { return new Date(v).toLocaleString('ru', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+    catch { return String(v); }
+  }
+  function toDatetimeLocal(v) {
+    if (!v) return '';
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function promoStatus(p) {
+    if (!p.isActive) return { label: 'Выкл', cls: 'badge-muted' };
+    const now = new Date();
+    if (p.startsAt && new Date(p.startsAt) > now) return { label: 'Ждёт старта', cls: 'badge-muted' };
+    if (p.expiresAt && new Date(p.expiresAt) < now) return { label: 'Истёк', cls: 'badge-muted' };
+    if (p.maxUses != null && p.usesCount >= p.maxUses) return { label: 'Использован', cls: 'badge-muted' };
+    return { label: 'Активен', cls: 'badge-success' };
+  }
+
+  function renderPromoTable() {
+    const tbody = $('promo-table');
+    if (!tbody) return;
+    if (!PromoState.promos.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted" style="padding:20px">Промокодов пока нет</td></tr>';
+      return;
+    }
+    tbody.innerHTML = PromoState.promos.map((p) => {
+      const status = promoStatus(p);
+      const usesLabel = p.maxUses != null ? `${p.usesCount} / ${p.maxUses}` : `${p.usesCount} / ∞`;
+      return `
+        <tr>
+          <td><code style="font-family:ui-monospace,monospace;font-weight:600">${escapeHtml(p.code)}</code></td>
+          <td>${escapeHtml(p.planName)}</td>
+          <td>${p.durationDays} дн</td>
+          <td><button class="icon-btn" data-promo-uses="${p.id}" title="История активаций">${usesLabel}</button></td>
+          <td>${fmtDate(p.expiresAt)}</td>
+          <td><span class="badge ${status.cls}">${status.label}</span></td>
+          <td>
+            <div class="actions-row">
+              <button class="icon-btn" data-copy-promo="${escapeHtml(p.code)}" title="Скопировать код">⧉</button>
+              <button class="icon-btn" data-edit-promo="${p.id}" title="Редактировать">✎</button>
+              <button class="icon-btn danger" data-del-promo="${p.id}" title="Удалить">✕</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    tbody.querySelectorAll('[data-copy-promo]').forEach((b) => {
+      b.addEventListener('click', () => {
+        navigator.clipboard.writeText(b.dataset.copyPromo);
+        toast('Код скопирован');
+      });
+    });
+    tbody.querySelectorAll('[data-edit-promo]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const p = PromoState.promos.find((x) => x.id == b.dataset.editPromo);
+        if (p) openModal('promo', p);
+      });
+    });
+    tbody.querySelectorAll('[data-del-promo]').forEach((b) => {
+      b.addEventListener('click', async () => {
+        if (!confirm('Удалить промокод? Все связанные активации тоже удалятся.')) return;
+        try {
+          const token = window.GosClient.getToken();
+          const res = await fetch(window.GosClient.API_BASE + '/promo/' + b.dataset.delPromo, {
+            method: 'DELETE',
+            headers: { Authorization: 'Bearer ' + token },
+          }).then((r) => r.json());
+          if (!res.success) throw new Error(res.error || 'Ошибка');
+          await loadPromos();
+          toast('Промокод удалён');
+        } catch (err) { toast('Ошибка: ' + err.message); }
+      });
+    });
+    tbody.querySelectorAll('[data-promo-uses]').forEach((b) => {
+      b.addEventListener('click', () => showPromoUses(b.dataset.promoUses));
+    });
+  }
+
+  function preparePromoModal(p) {
+    $('modal-promo-title').textContent = p ? 'Редактирование промокода' : 'Новый промокод';
+    $('promo-code').value = p?.code || '';
+    $('promo-code').disabled = !!p; // код нельзя менять после создания
+    $('promo-gen-btn').style.display = p ? 'none' : '';
+    // План
+    const planSel = $('promo-plan');
+    planSel.innerHTML = PromoState.plans.length
+      ? PromoState.plans.map((pl) => `<option value="${pl.id}" ${p && p.planId === pl.id ? 'selected' : ''}>${escapeHtml(pl.name)} (${escapeHtml(pl.slug)})</option>`).join('')
+      : '<option value="">Нет планов — создайте план сначала</option>';
+    planSel.disabled = !!p;
+    $('promo-days').value = p?.durationDays || 30;
+    $('promo-max-uses').value = p?.maxUses != null ? p.maxUses : '';
+    $('promo-starts-at').value = toDatetimeLocal(p?.startsAt);
+    $('promo-expires-at').value = toDatetimeLocal(p?.expiresAt);
+    $('promo-notes').value = p?.notes || '';
+    $('promo-active').checked = p ? !!p.isActive : true;
+  }
+
+  function setupPromoActions() {
+    $('promo-gen-btn').addEventListener('click', () => {
+      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let code = '';
+      for (let i = 0; i < 8; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+      $('promo-code').value = code;
+    });
+    $('promo-save').addEventListener('click', async () => {
+      const isEdit = State.editing.type === 'promo' && State.editing.id;
+      const payload = isEdit ? {
+        durationDays: parseInt($('promo-days').value, 10) || null,
+        maxUses: $('promo-max-uses').value ? parseInt($('promo-max-uses').value, 10) : null,
+        startsAt: $('promo-starts-at').value || null,
+        expiresAt: $('promo-expires-at').value || null,
+        isActive: $('promo-active').checked,
+        notes: $('promo-notes').value,
+      } : {
+        code: $('promo-code').value.trim() || null,
+        planId: parseInt($('promo-plan').value, 10),
+        durationDays: parseInt($('promo-days').value, 10),
+        maxUses: $('promo-max-uses').value ? parseInt($('promo-max-uses').value, 10) : null,
+        startsAt: $('promo-starts-at').value || null,
+        expiresAt: $('promo-expires-at').value || null,
+        isActive: $('promo-active').checked,
+        notes: $('promo-notes').value,
+      };
+      if (!isEdit && !payload.planId) return toast('Выберите план');
+      if (!payload.durationDays || payload.durationDays <= 0) return toast('Укажите длительность в днях');
+      const token = window.GosClient.getToken();
+      const url = isEdit
+        ? window.GosClient.API_BASE + '/promo/' + State.editing.id
+        : window.GosClient.API_BASE + '/promo';
+      try {
+        const res = await fetch(url, {
+          method: isEdit ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+          body: JSON.stringify(payload),
+        }).then((r) => r.json());
+        if (!res.success) throw new Error(res.error || 'Ошибка сохранения');
+        await loadPromos();
+        closeAllModals();
+        toast(isEdit ? 'Сохранено' : `Промокод создан: ${res.code || payload.code}`);
+      } catch (err) { toast('Ошибка: ' + err.message); }
+    });
+  }
+
+  async function showPromoUses(promoId) {
+    const body = $('promo-uses-body');
+    body.innerHTML = '<div class="text-muted">Загрузка…</div>';
+    $('modal-promo-uses').classList.add('open');
+    try {
+      const token = window.GosClient.getToken();
+      const res = await fetch(window.GosClient.API_BASE + '/promo/' + promoId + '/redemptions', {
+        headers: { Authorization: 'Bearer ' + token },
+      }).then((r) => r.json());
+      const list = (res && res.redemptions) || [];
+      if (!list.length) {
+        body.innerHTML = '<div class="text-muted">Пока никто не активировал</div>';
+        return;
+      }
+      body.innerHTML = `
+        <table class="table" style="width:100%">
+          <thead><tr><th>Email</th><th>Имя</th><th>Дата активации</th></tr></thead>
+          <tbody>
+            ${list.map((r) => `
+              <tr>
+                <td>${escapeHtml(r.email || '')}</td>
+                <td>${escapeHtml(r.username || '')}</td>
+                <td>${fmtDate(r.redeemedAt)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (err) {
+      body.innerHTML = `<div class="text-muted" style="color:var(--danger)">${escapeHtml(err.message)}</div>`;
+    }
+  }
 
   function initSupportView() {
     loadSupportTickets();

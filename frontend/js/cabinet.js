@@ -278,6 +278,50 @@
       if (e.target.id === 'modal-change-server') closeChangeServerModal();
     });
 
+    // Активация промокода
+    const promoBtn = $('btn-redeem-promo');
+    const promoInput = $('promo-input');
+    const promoHint = $('promo-hint');
+    if (promoBtn && promoInput) {
+      const redeem = async () => {
+        const code = promoInput.value.trim();
+        if (!code) return;
+        promoBtn.disabled = true;
+        const oldText = promoBtn.textContent;
+        promoBtn.textContent = 'Проверяем...';
+        promoHint.style.color = '';
+        promoHint.textContent = '';
+        try {
+          const token = window.GosClient.getToken();
+          const r = await fetch(window.GosClient.API_BASE + '/promo/redeem', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+            body: JSON.stringify({ code }),
+          }).then((res) => res.json());
+          if (!r.success) {
+            promoHint.style.color = 'var(--danger)';
+            promoHint.textContent = r.error || 'Не удалось активировать';
+            return;
+          }
+          promoInput.value = '';
+          promoHint.style.color = 'var(--success, #10B981)';
+          promoHint.textContent = `Активирован план «${r.planName}» на ${r.grantedDays} дн.`;
+          showProfileSuccess(`Промокод активирован: ${r.planName}, +${r.grantedDays} дн`);
+        } catch (err) {
+          promoHint.style.color = 'var(--danger)';
+          promoHint.textContent = err.message;
+        } finally {
+          promoBtn.disabled = false;
+          promoBtn.textContent = oldText;
+        }
+      };
+      promoBtn.addEventListener('click', redeem);
+      promoInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') redeem(); });
+      promoInput.addEventListener('input', () => {
+        promoInput.value = promoInput.value.toUpperCase();
+      });
+    }
+
     $('btn-save-profile').addEventListener('click', async () => {
       const username = $('profile-username').value.trim();
       if (!username || username.length < 2) {
