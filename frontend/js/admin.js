@@ -78,6 +78,7 @@
     if (name === 'projects') renderProjectsTable();
     if (name === 'servers') renderServersTable();
     if (name === 'promo') initPromoView();
+    if (name === 'db') initDbView();
     if (name === 'categories') renderCategoriesTable();
     if (name === 'articles') renderArticlesTable();
     if (name === 'users') loadAndRenderUsers();
@@ -1685,6 +1686,146 @@
     pollTimer: null,
     pollInflight: false,
   };
+
+  // ============================================================
+  // Database backup / restore
+  // ============================================================
+  const DbState = { initialized: false };
+
+  async function initDbView() {
+    await loadDbInfo();
+    if (DbState.initialized) return;
+    DbState.initialized = true;
+    setupDbActions();
+  }
+
+  async function loadDbInfo() {
+    const body = $('db-info-body');
+    if (!body) return;
+    body.innerHTML = '<div class="text-sm text-muted">Загрузка…</div>';
+    try {
+      const token = window.GosClient.getToken();
+      const res = await fetch(window.GosClient.API_BASE + '/admin/db/info', {
+        headers: { Authorization: 'Bearer ' + token },
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Ошибка загрузки');
+      const rows = (res.tables || []).map((t) => `
+        <tr>
+          <td><code>${escapeHtml(t.name)}</code></td>
+          <td style="text-align:right">${Number(t.rows || 0).toLocaleString('ru')}</td>
+          <td style="text-align:right">${Number(t.sizeMB || 0).toFixed(2)} MB</td>
+        </tr>
+      `).join('');
+      body.innerHTML = `
+        <div class="text-sm" style="margin-bottom:12px">
+          <b>База:</b> <code>${escapeHtml(res.database)}</code> &nbsp;·&nbsp;
+          <b>Таблиц:</b> ${res.tables.length} &nbsp;·&nbsp;
+          <b>Размер:</b> ${res.totalSizeMB} MB
+        </div>
+        <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+          <table class="table">
+            <thead><tr><th>Таблица</th><th style="text-align:right">Строк</th><th style="text-align:right">Размер</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    } catch (err) {
+      body.innerHTML = `<div class="text-sm" style="color:var(--danger)">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function setupDbActions() {
+    // Export — скачивание через fetch (нужен Bearer в заголовке, обычный <a> не подойдёт)
+    $('db-export-btn').addEventListener('click', async () => {
+      const btn = $('db-export-btn');
+      const status = $('db-export-status');
+      btn.disabled = true;
+      status.textContent = 'Генерируем дамп…';
+      status.style.color = '';
+      try {
+        const token = window.GosClient.getToken();
+        const res = await fetch(window.GosClient.API_BASE + '/admin/db/export', {
+          headers: { Authorization: 'Bearer ' + token },
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        const blob = await res.blob();
+        // Извлекаем имя файла из Content-Disposition
+        const disp = res.headers.get('Content-Disposition') || '';
+        const m = disp.match(/filename="([^"]+)"/);
+        const filename = m ? m[1] : `gos-dump-${new Date().toISOString().slice(0,10)}.sql`;
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
+
+        const sizeMB = (blob.size / 1024 / 1024).toFixed(2);
+        status.textContent = `Скачано: ${filename} (${sizeMB} MB)`;
+        status.style.color = 'var(--success, #10B981)';
+      } catch (err) {
+        status.textContent = 'Ошибка: ' + err.message;
+        status.style.color = 'var(--danger)';
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    // Import — file input + POST
+    const fileInput = $('db-import-file');
+    const importBtn = $('db-import-btn');
+    fileInput.addEventListener('change', () => {
+      importBtn.disabled = !fileInput.files.length;
+    });
+
+    importBtn.addEventListener('click', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      const confirmMsg =
+        `⚠ ВНИМАНИЕ!\n\n` +
+        `Импорт полностью перезапишет текущую базу данных.\n` +
+        `Все текущие пользователи, подписки, статьи и т.д. будут заменены содержимым файла.\n\n` +
+        `Файл: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)\n\n` +
+        `Продолжить?`;
+      if (!confirm(confirmMsg)) return;
+
+      const status = $('db-import-status');
+      importBtn.disabled = true;
+      const oldText = importBtn.textContent;
+      importBtn.textContent = 'Импорт идёт…';
+      status.style.color = '';
+      status.textContent = 'Отправляем файл на сервер, ждите (может занять минуты)…';
+
+      try {
+        const token = window.GosClient.getToken();
+        const fd = new FormData();
+        fd.append('dump', file);
+        const res = await fetch(window.GosClient.API_BASE + '/admin/db/import', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+          body: fd,
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || `HTTP ${res.status}`);
+        status.style.color = 'var(--success, #10B981)';
+        status.textContent = `✅ Импорт завершён: ${data.sizeMB} MB. ${data.message || ''}`;
+        fileInput.value = '';
+        loadDbInfo();
+      } catch (err) {
+        status.style.color = 'var(--danger)';
+        status.textContent = 'Ошибка: ' + err.message;
+      } finally {
+        importBtn.disabled = false;
+        importBtn.textContent = oldText;
+      }
+    });
+  }
 
   // ============================================================
   // Promo codes

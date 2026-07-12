@@ -75,6 +75,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41 13.41 20.59a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
           <span>Промокоды</span>
         </div>
+        <div class="admin-nav-item" data-view="db">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+          <span>База данных</span>
+        </div>
         <div class="admin-nav-item" data-view="payments">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
           <span>Платежи</span>
@@ -353,6 +357,55 @@
             </thead>
             <tbody id="releases-table"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- DATABASE BACKUP / RESTORE -->
+      <div class="view hidden" data-view="db">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">База данных</div>
+            <div class="admin-subtitle">Скачивание и восстановление полной копии MySQL. Используется при переносе на другой сервер.</div>
+          </div>
+        </div>
+
+        <!-- Info block -->
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="admin-title" style="font-size:16px;margin-bottom:12px">Текущая база</div>
+          <div id="db-info-body">
+            <div class="text-sm text-muted">Загрузка…</div>
+          </div>
+        </div>
+
+        <!-- Export -->
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="admin-title" style="font-size:16px;margin-bottom:8px">📥 Скачать дамп</div>
+          <div class="text-sm text-muted" style="margin-bottom:14px">
+            Скачает файл <code>gos-dump-YYYYMMDD.sql</code> с полным содержимым БД: структура + все данные. Формат совместим с <code>mysql &lt; file.sql</code>.<br/>
+            <b style="color:var(--warning, #F59E0B)">Внимание:</b> файл содержит все пароли пользователей (хешированные), их email, HWID устройств и другие чувствительные данные — храни в защищённом месте.
+          </div>
+          <button class="btn btn-primary" id="db-export-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Скачать SQL-дамп
+          </button>
+          <span id="db-export-status" class="text-sm text-muted" style="margin-left:12px"></span>
+        </div>
+
+        <!-- Import -->
+        <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-lg); padding: 20px; margin-bottom: 16px;">
+          <div class="admin-title" style="font-size:16px;margin-bottom:8px">📤 Восстановить из файла</div>
+          <div class="text-sm" style="margin-bottom:14px;color:var(--danger, #F87171);background:rgba(239,68,68,0.08);padding:10px;border-radius:6px;border-left:3px solid var(--danger, #F87171)">
+            <b>⚠ Опасно!</b> Импорт полностью перезапишет текущую БД. Все существующие данные будут заменены содержимым файла. Сделай экспорт текущей БД сначала!
+          </div>
+          <div class="input-group">
+            <label class="input-label">SQL-файл (до 500 MB)</label>
+            <input type="file" class="input" id="db-import-file" accept=".sql,application/sql,text/plain" />
+          </div>
+          <button class="btn btn-danger" id="db-import-btn" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:6px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Восстановить БД из файла
+          </button>
+          <div id="db-import-status" class="text-sm" style="margin-top:12px"></div>
         </div>
       </div>
 
