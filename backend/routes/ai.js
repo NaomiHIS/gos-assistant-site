@@ -2,23 +2,58 @@ const express = require('express');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const db = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { loadCurrentSubscription } = require('./subscriptions');
 
 const FEATURE_KEY = 'ai_assistant';
 
 // ============================================================
-// Config (env)
+// Config: DB-first (ai_settings, single-row id=1), env как fallback.
+// Env-дефолты используются пока админ не сохранил настройки через UI.
 // ============================================================
-// AI_API_BASE_URL — например https://api.proxyapi.ru/openai/v1 или https://api.openai.com/v1
-// AI_API_KEY     — секрет провайдера (rk_live_..., sk-...)
-// AI_MODEL       — по умолчанию gpt-5-nano
-// AI_MAX_TOKENS  — лимит ответа
-const AI_BASE_URL = (process.env.AI_API_BASE_URL || 'https://api.vsegpt.ru/v1').replace(/\/+$/, '');
-const AI_API_KEY = process.env.AI_API_KEY || '';
-const AI_MODEL = process.env.AI_MODEL || 'google/gemini-3.1-pro-preview-1m';
-const AI_MAX_TOKENS = parseInt(process.env.AI_MAX_TOKENS || '2000', 10);
-const AI_TEMPERATURE = parseFloat(process.env.AI_TEMPERATURE || '0.2');
+const ENV_DEFAULTS = {
+  baseUrl: (process.env.AI_API_BASE_URL || 'https://api.vsegpt.ru/v1').replace(/\/+$/, ''),
+  apiKey: process.env.AI_API_KEY || '',
+  model: process.env.AI_MODEL || 'google/gemini-3.1-pro-preview-1m',
+  maxTokens: parseInt(process.env.AI_MAX_TOKENS || '2000', 10),
+  temperature: parseFloat(process.env.AI_TEMPERATURE || '0.2'),
+  rateLimitPerHour: parseInt(process.env.AI_RATE_LIMIT_PER_HOUR || '60', 10),
+};
+
+let configCache = null;
+let configCacheAt = 0;
+const CONFIG_TTL_MS = 30_000; // короткий TTL — новые значения из админки подхватываются быстро
+
+async function getAiConfig(force = false) {
+  const now = Date.now();
+  if (!force && configCache && (now - configCacheAt) < CONFIG_TTL_MS) return configCache;
+  let row = null;
+  try {
+    row = await db.queryOne('SELECT * FROM ai_settings WHERE id = 1');
+  } catch (err) {
+    console.warn('[AI] ai_settings load failed, using env defaults:', err.message);
+  }
+  const cfg = { ...ENV_DEFAULTS };
+  if (row) {
+    // Каждое поле: если в БД есть непустое значение — используем его, иначе env
+    if (row.api_key && String(row.api_key).trim()) cfg.apiKey = String(row.api_key).trim();
+    if (row.base_url && String(row.base_url).trim()) cfg.baseUrl = String(row.base_url).trim().replace(/\/+$/, '');
+    if (row.model && String(row.model).trim()) cfg.model = String(row.model).trim();
+    if (row.max_tokens != null && Number(row.max_tokens) > 0) cfg.maxTokens = Number(row.max_tokens);
+    if (row.temperature != null) cfg.temperature = Number(row.temperature);
+    if (row.rate_limit_per_hour != null && Number(row.rate_limit_per_hour) > 0) {
+      cfg.rateLimitPerHour = Number(row.rate_limit_per_hour);
+    }
+  }
+  configCache = cfg;
+  configCacheAt = now;
+  return cfg;
+}
+
+function invalidateAiConfig() {
+  configCache = null;
+  configCacheAt = 0;
+}
 
 // ============================================================
 // Available role personas — passed by client to bias the system prompt.
@@ -530,10 +565,18 @@ function buildSystemPrompt(role, context) {
 
 // ============================================================
 // Per-user rate limiter (auth-aware — ключ это user.id)
+// Лимит берётся динамически из ai_settings (fallback: env AI_RATE_LIMIT_PER_HOUR)
 // ============================================================
 const aiLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 час
-  max: parseInt(process.env.AI_RATE_LIMIT_PER_HOUR || '60', 10),
+  max: async (req) => {
+    try {
+      const cfg = await getAiConfig();
+      return cfg.rateLimitPerHour;
+    } catch {
+      return ENV_DEFAULTS.rateLimitPerHour;
+    }
+  },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => (req.user && req.user.id ? `u:${req.user.id}` : req.ip),
@@ -568,15 +611,168 @@ router.get('/status', requireAuth, async (req, res) => {
   try {
     const sub = await loadCurrentSubscription(req.user.id);
     const enabled = !!(sub && Array.isArray(sub.plan.features) && sub.plan.features.includes(FEATURE_KEY));
+    const cfg = await getAiConfig();
     res.json({
       success: true,
       enabled,
-      configured: !!AI_API_KEY,
-      model: AI_MODEL,
+      configured: !!cfg.apiKey,
+      model: cfg.model,
       roles: Object.keys(ROLE_LABEL).map((k) => ({ key: k, label: ROLE_LABEL[k] })),
-      limitsPerHour: parseInt(process.env.AI_RATE_LIMIT_PER_HOUR || '60', 10),
+      limitsPerHour: cfg.rateLimitPerHour,
     });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// GET /api/ai/settings (admin) — текущий конфиг с маскированным ключом
+// PUT /api/ai/settings (admin) — сохранить конфиг (пустые поля → NULL → fallback на env)
+// ============================================================
+function maskKey(key) {
+  const s = String(key || '');
+  if (!s) return '';
+  if (s.length <= 6) return '••••';
+  return '••••' + s.slice(-4);
+}
+
+router.get('/settings', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const cfg = await getAiConfig(true);
+    const row = await db.queryOne('SELECT * FROM ai_settings WHERE id = 1');
+    res.json({
+      success: true,
+      settings: {
+        apiKeyMasked: maskKey(cfg.apiKey),
+        hasApiKey: !!cfg.apiKey,
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        maxTokens: cfg.maxTokens,
+        temperature: cfg.temperature,
+        rateLimitPerHour: cfg.rateLimitPerHour,
+        isConfigured: !!(row && row.is_configured),
+        updatedAt: row ? row.updated_at : null,
+      },
+      envDefaults: {
+        baseUrl: ENV_DEFAULTS.baseUrl,
+        model: ENV_DEFAULTS.model,
+        maxTokens: ENV_DEFAULTS.maxTokens,
+        temperature: ENV_DEFAULTS.temperature,
+        rateLimitPerHour: ENV_DEFAULTS.rateLimitPerHour,
+        hasApiKey: !!ENV_DEFAULTS.apiKey,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.put('/settings', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const b = req.body || {};
+    // apiKey: undefined → не трогаем; '' → очистить (NULL → env fallback); строка → сохранить
+    const apiKeyProvided = Object.prototype.hasOwnProperty.call(b, 'apiKey');
+    const apiKeyVal = apiKeyProvided ? (b.apiKey == null ? '' : String(b.apiKey).trim()) : null;
+
+    const baseUrl = b.baseUrl != null ? String(b.baseUrl).trim() : '';
+    const model = b.model != null ? String(b.model).trim() : '';
+    const maxTokens = b.maxTokens != null && b.maxTokens !== '' ? parseInt(b.maxTokens, 10) : null;
+    const temperature = b.temperature != null && b.temperature !== '' ? parseFloat(b.temperature) : null;
+    const rateLimit = b.rateLimitPerHour != null && b.rateLimitPerHour !== ''
+      ? parseInt(b.rateLimitPerHour, 10) : null;
+
+    if (maxTokens != null && (!Number.isFinite(maxTokens) || maxTokens < 1 || maxTokens > 100000)) {
+      return res.status(400).json({ success: false, error: 'maxTokens должен быть 1..100000' });
+    }
+    if (temperature != null && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
+      return res.status(400).json({ success: false, error: 'temperature должна быть 0..2' });
+    }
+    if (rateLimit != null && (!Number.isFinite(rateLimit) || rateLimit < 1 || rateLimit > 100000)) {
+      return res.status(400).json({ success: false, error: 'rateLimitPerHour должен быть 1..100000' });
+    }
+
+    const fields = [
+      'base_url = ?',
+      'model = ?',
+      'max_tokens = ?',
+      'temperature = ?',
+      'rate_limit_per_hour = ?',
+      'is_configured = 1',
+      'updated_by = ?',
+    ];
+    const params = [
+      baseUrl || null,
+      model || null,
+      maxTokens,
+      temperature,
+      rateLimit,
+      req.user.id,
+    ];
+    if (apiKeyProvided) {
+      fields.unshift('api_key = ?');
+      params.unshift(apiKeyVal || null);
+    }
+
+    await db.query('INSERT IGNORE INTO ai_settings (id) VALUES (1)');
+    await db.query(`UPDATE ai_settings SET ${fields.join(', ')} WHERE id = 1`, params);
+
+    invalidateAiConfig();
+    const cfg = await getAiConfig(true);
+    res.json({
+      success: true,
+      settings: {
+        apiKeyMasked: maskKey(cfg.apiKey),
+        hasApiKey: !!cfg.apiKey,
+        baseUrl: cfg.baseUrl,
+        model: cfg.model,
+        maxTokens: cfg.maxTokens,
+        temperature: cfg.temperature,
+        rateLimitPerHour: cfg.rateLimitPerHour,
+      },
+    });
+  } catch (err) {
+    console.error('[AI] settings save error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// POST /api/ai/settings/test (admin) — проверка соединения с провайдером
+// ============================================================
+router.post('/settings/test', requireAuth, requireRole('admin'), async (req, res) => {
+  try {
+    const cfg = await getAiConfig(true);
+    if (!cfg.apiKey) return res.status(400).json({ success: false, error: 'API key не задан' });
+    const url = cfg.baseUrl + '/chat/completions';
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 20000);
+    try {
+      const upstream = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + cfg.apiKey },
+        body: JSON.stringify({
+          model: cfg.model,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 10,
+        }),
+        signal: ctl.signal,
+      });
+      const t = await upstream.text();
+      let d = null;
+      try { d = JSON.parse(t); } catch {}
+      if (!upstream.ok) {
+        const msg = (d && (d.error?.message || d.message)) || `HTTP ${upstream.status}`;
+        return res.status(502).json({ success: false, error: msg, status: upstream.status });
+      }
+      const reply = d?.choices?.[0]?.message?.content || '';
+      res.json({ success: true, model: d?.model || cfg.model, reply: reply.slice(0, 200) });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      return res.status(504).json({ success: false, error: 'Timeout (20s)' });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -586,8 +782,9 @@ router.get('/status', requireAuth, async (req, res) => {
 // body: { messages: [{role: 'user'|'assistant', content: string}], persona?: 'lawyer'|... }
 // ============================================================
 router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) => {
-  if (!AI_API_KEY) {
-    return res.status(503).json({ error: 'AI не настроен на сервере (AI_API_KEY)' });
+  const cfg = await getAiConfig();
+  if (!cfg.apiKey) {
+    return res.status(503).json({ error: 'AI не настроен: задайте API-ключ в админке (Админ → AI-настройки)' });
   }
 
   const { messages, persona, serverId } = req.body || {};
@@ -646,7 +843,7 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     content: [baseSystem, indexBlock, articlesBlock].filter(Boolean).join('\n'),
   };
 
-  const url = AI_BASE_URL + '/chat/completions';
+  const url = cfg.baseUrl + '/chat/completions';
 
   async function callUpstream(messages, timeoutMs = 90000) {
     const upstreamController = new AbortController();
@@ -656,13 +853,13 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + AI_API_KEY,
+          Authorization: 'Bearer ' + cfg.apiKey,
         },
         body: JSON.stringify({
-          model: AI_MODEL,
+          model: cfg.model,
           messages,
-          temperature: AI_TEMPERATURE,
-          max_tokens: AI_MAX_TOKENS,
+          temperature: cfg.temperature,
+          max_tokens: cfg.maxTokens,
           user: 'u' + req.user.id,
         }),
         signal: upstreamController.signal,
@@ -801,7 +998,7 @@ router.post('/chat', requireAuth, requireAiFeature, aiLimiter, async (req, res) 
     res.json({
       success: true,
       reply,
-      model: data?.model || AI_MODEL,
+      model: data?.model || cfg.model,
       usage: data?.usage || null,
       persona: persona || 'civilian',
       serverId: context ? context.server.id : null,

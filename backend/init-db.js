@@ -443,6 +443,28 @@ async function runMigrations() {
     `);
     await ensureColumn('users', 'referral_redeemed', 'TINYINT(1) NOT NULL DEFAULT 0');
     console.log('[InitDB] ✓ user_devices ensured');
+
+    // ============================================================
+    // ai_settings (single-row id=1): конфиг AI-провайдера, редактируется из админки.
+    // Env-переменные (AI_API_KEY, AI_API_BASE_URL, ...) остаются как fallback,
+    // если строка пустая или флаг is_configured=0.
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS ai_settings (
+        id TINYINT PRIMARY KEY DEFAULT 1,
+        api_key TEXT NULL,
+        base_url VARCHAR(500) NULL,
+        model VARCHAR(255) NULL,
+        max_tokens INT NULL,
+        temperature DECIMAL(3,2) NULL,
+        rate_limit_per_hour INT NULL,
+        is_configured TINYINT(1) NOT NULL DEFAULT 0,
+        updated_by INT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB
+    `);
+    await db.query('INSERT IGNORE INTO ai_settings (id) VALUES (1)');
+    console.log('[InitDB] ✓ ai_settings ensured');
   } catch (err) {
     console.warn('[InitDB] migration warning:', err.message);
   }

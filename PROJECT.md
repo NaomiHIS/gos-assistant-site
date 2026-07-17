@@ -226,6 +226,7 @@ D:\MVD Assistant\
 | `promo_redemptions` | id, promo_code_id, user_id, granted_subscription_id, redeemed_at, **UNIQUE (promo_code_id, user_id)** — один код можно активировать один раз на юзера |
 | `referrals` | id, referrer_user_id, referee_user_id (UNIQUE), referee_ip, referee_user_agent, status (granted/blocked), block_reason, **redeem_source (web/app)**, **redeem_hwid**, referrer_reward_days, referee_reward_days, created_at — журнал реферальных активаций (включая blocked-попытки для антифрод-аудита) |
 | `user_devices` | id, user_id, **hwid CHAR(64)** (SHA-256 от BIOS UUID+MAC+hostname), platform, first_ip, last_ip, first_seen, last_seen, UNIQUE (user_id, hwid). Накопительный учёт устройств для антифрод-проверки реферальных кодов. |
+| `ai_settings` | Single-row (id=1): **api_key, base_url, model, max_tokens, temperature, rate_limit_per_hour**, is_configured, updated_by, updated_at — конфиг AI-провайдера редактируется из админки (**Админ → AI-настройки**). Пустые поля → fallback на env-переменные `AI_*`. |
 
 **Важно:** есть авто-инициализация в `init-db.js` — при первом запуске сервера создаёт таблицы и заливает seed.
 **Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `binder_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, **`projects`** (+ seed majestic/gta5rp), **`promo_codes`** + **`promo_redemptions`**, и ALTER: `users` (`locked_server_id`, `locked_project_id`, `referral_code`, `referred_by_user_id`, `registration_ip`, `referral_redeemed`), `servers` (`project_id`, backfill в majestic), `categories` (`project_id NULL`). Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д) — оба с фичами `binder_unlimited`, `binder_share`; провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
@@ -307,8 +308,11 @@ D:\MVD Assistant\
 - `DELETE /subscriptions/grants/:id` (admin) — soft revoke (is_active=0)
 
 ### AI Assistant
-- `GET /ai/status` (auth) — `{ enabled, configured, model, roles, limitsPerHour }`. `enabled=true` если у юзера активная подписка с фичей `ai_assistant`.
+- `GET /ai/status` (auth) — `{ enabled, configured, model, roles, limitsPerHour }`. `enabled=true` если у юзера активная подписка с фичей `ai_assistant`. `configured=true` если задан `apiKey` (в БД `ai_settings` или в env-переменной `AI_API_KEY`).
 - `POST /ai/chat` (auth + feature `ai_assistant` + rate-limit) — `{ messages: [{role,content}], persona?: 'lawyer'|'prosecutor'|'cop'|'judge'|'civilian', serverId?: string }` → `{ reply, model, usage, persona, serverId, serverName }`. История диалога не хранится на сервере — клиент шлёт последние сообщения каждый раз. Если передан `serverId`, бэк подтягивает название сервера + список активных категорий с количеством статей и кладёт их в system-prompt, чтобы AI опирался именно на законы этого сервера.
+- `GET /ai/settings` (admin) — текущий конфиг с **маскированным** ключом (`••••XXXX`), плюс `envDefaults` для справки.
+- `PUT /ai/settings` (admin) — `{ apiKey?, baseUrl?, model?, maxTokens?, temperature?, rateLimitPerHour? }`. `apiKey`: не передан — не трогаем; пустая строка — очистить (тогда fallback на env). Остальные поля пустые → NULL → fallback на env. Изменения применяются сразу (кэш конфига 30с).
+- `POST /ai/settings/test` (admin) — пингует upstream (`chat/completions` с `max_tokens: 10`), возвращает первые 200 символов ответа. Timeout 20с.
 
 ### Payments
 - `GET /subscriptions/plans/public` — публично, без auth: тарифы с ценой/сроком для страницы /pricing.html
@@ -434,12 +438,12 @@ DISCORD_REDIRECT_URI=https://gosassistent.su/api/auth/discord/callback
 | `CORS_ORIGIN` | `*` |
 | `NODE_ENV` | `production` |
 | `UPLOADS_DIR` | `/app/uploads` (если подключён Volume) |
-| `AI_API_KEY` | Ключ AI-провайдера (`sk-or-vv-...` для vsegpt.ru). Без него `/api/ai/chat` вернёт 503 |
-| `AI_API_BASE_URL` | База OpenAI-совместимого API. Дефолт `https://api.vsegpt.ru/v1` |
-| `AI_MODEL` | Имя модели, по умолчанию `google/gemini-3.1-pro-preview-1m` (в коде; в Railway можно переопределить на `google/gemini-3.1-flash-lite` для скорости) |
-| `AI_MAX_TOKENS` | Лимит ответа, по умолчанию **2000** (был 800 — обрезался русский с перечислением статей) |
-| `AI_TEMPERATURE` | По умолчанию **0.2** (был 0.4 — снижено для меньшего креатива в номерах) |
-| `AI_RATE_LIMIT_PER_HOUR` | Лимит запросов на юзера в час (по user.id), дефолт 60 |
+| `AI_API_KEY` | **Fallback** для AI-ассистента. С 2026-07 конфиг AI живёт в БД (`ai_settings`) и редактируется через **Админ → AI-настройки**. Env используется только если поле в БД пустое. Без ключа `/api/ai/chat` вернёт 503 |
+| `AI_API_BASE_URL` | Fallback base URL. Дефолт `https://api.vsegpt.ru/v1` |
+| `AI_MODEL` | Fallback модели, по умолчанию `google/gemini-3.1-pro-preview-1m` |
+| `AI_MAX_TOKENS` | Fallback лимита ответа, по умолчанию **2000** |
+| `AI_TEMPERATURE` | Fallback temperature, по умолчанию **0.2** |
+| `AI_RATE_LIMIT_PER_HOUR` | Fallback rate-limit, дефолт 60 запросов/час на юзера |
 
 **Локально**: те же переменные в `D:\Site GOS\backend\.env` (gitignored). Файл `db.js` загружает env через `dotenv.config({ path: path.join(__dirname, '.env') })`.
 
@@ -527,7 +531,7 @@ npm run dist
 | `/pricing.html` | Публичная страница тарифов. Карточки планов (Lite/Premium) с ценой/сроком/фичами. Модалка «Купить» с выбором провайдера оплаты + дисклеймер согласия с офертой и политикой |
 | `/contacts.html` | Контакты владельца — карточка с аватаром, соцсетями, кастомными ссылками |
 | `/cabinet.html` | Личный кабинет — вкладки: **Профиль (с карточкой подписки + Реферальная программа)**, Безопасность (включая привязку Discord), Приложение (скачивание), Данные (серверы, поиск), **Поддержка (с бейджем непрочитанных)**. Хеш-роутинг: `/cabinet.html#download` (+ алиасы `#downloads`/`#app`/`#application`) автоматически переключает на вкладку Приложение. Если гость → редирект на `/login.html?redirect=<orig URL>` с возвратом после авторизации. |
-| `/admin.html` | Админ-панель (требует role: admin). Вкладки: Дашборд, Серверы, Категории, Статьи, Пользователи, Парсер, Релизы, Донат, DevLog, **Тех. работы**, **Поддержка (с бейджем)**, **Подписки**, **Платежи**, **Контакты** |
+| `/admin.html` | Админ-панель (требует role: admin). Вкладки: Дашборд, Серверы, Категории, Статьи, Пользователи, Парсер, Релизы, Донат, DevLog, **Тех. работы**, **Поддержка (с бейджем)**, **Подписки**, **Платежи**, **Контакты**, **AI-настройки** |
 | `/devlog.html` | Публичный журнал изменений |
 | `/terms.html` | Условия использования |
 | `/privacy.html` | Политика конфиденциальности (v1.1 — с разделом «Платежи и подписки» про ЮKassa/Robokassa, 5-летнее хранение платежных данных по 402-ФЗ) |

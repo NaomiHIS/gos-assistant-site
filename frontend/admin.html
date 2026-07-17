@@ -88,6 +88,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <span>Контакты</span>
         </div>
+        <div class="admin-nav-item" data-view="ai-settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a5 5 0 0 1 5 5v3h1a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3v-6a3 3 0 0 1 3-3h1V7a5 5 0 0 1 5-5z"/><circle cx="12" cy="15" r="2"/></svg>
+          <span>AI-настройки</span>
+        </div>
 
         <div class="admin-nav-section">Прочее</div>
         <div class="admin-nav-item" id="nav-home">
@@ -1056,6 +1060,75 @@
           </div>
           <div class="text-xs text-muted mb-3">Можно добавить любые ссылки — Boosty, YouTube, Twitch и т.п. Иконка — эмодзи (опционально).</div>
           <div id="ct-custom-links" class="admin-custom-links-list"></div>
+        </div>
+      </div>
+
+      <!-- AI SETTINGS -->
+      <div class="view hidden" data-view="ai-settings">
+        <div class="admin-header">
+          <div>
+            <div class="admin-title">AI-настройки</div>
+            <div class="admin-subtitle">Конфигурация AI-провайдера для ассистента (Premium-фича). Значения сохраняются в БД и подхватываются без рестарта сервера.</div>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary btn-sm" id="btn-test-ai">Проверить соединение</button>
+            <button class="btn btn-primary btn-sm" id="btn-save-ai">Сохранить</button>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px">
+          <div class="section-title">Провайдер</div>
+          <div class="input-group">
+            <label class="input-label">API Base URL</label>
+            <input type="text" class="input" id="ai-base-url" placeholder="https://api.vsegpt.ru/v1" />
+            <div class="text-xs text-muted" style="margin-top:4px">OpenAI-совместимый endpoint. Примеры: <code>https://api.vsegpt.ru/v1</code>, <code>https://api.openai.com/v1</code>, <code>https://api.proxyapi.ru/openai/v1</code>.</div>
+          </div>
+          <div class="input-group">
+            <label class="input-label">API Key</label>
+            <input type="password" class="input" id="ai-api-key" placeholder="sk-... / vv-... — оставьте пустым чтобы не менять" autocomplete="off" />
+            <div class="text-xs text-muted" style="margin-top:4px">
+              Текущий: <span id="ai-key-current">—</span>.
+              Оставьте поле пустым, чтобы сохранить остальные настройки не трогая ключ.
+              Введите <b>пробел или прочерк</b> и очистите поле, потом нажмите «Очистить ключ» ниже, если хотите сбросить.
+            </div>
+            <div style="margin-top:6px">
+              <button class="btn btn-secondary btn-sm" id="btn-clear-ai-key" type="button">Очистить сохранённый ключ</button>
+            </div>
+          </div>
+          <div class="input-group">
+            <label class="input-label">Модель</label>
+            <input type="text" class="input" id="ai-model" placeholder="google/gemini-3.1-pro-preview-1m" />
+            <div class="text-xs text-muted" style="margin-top:4px">Идентификатор модели у выбранного провайдера. Например: <code>google/gemini-3.1-flash-lite</code>, <code>gpt-4o-mini</code>, <code>gpt-5-nano</code>.</div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px">
+          <div class="section-title">Параметры генерации</div>
+          <div class="grid-2">
+            <div class="input-group">
+              <label class="input-label">Max tokens (ответ)</label>
+              <input type="number" class="input" id="ai-max-tokens" min="1" max="100000" placeholder="2000" />
+              <div class="text-xs text-muted" style="margin-top:4px">Лимит длины ответа. Дефолт: 2000. Слишком мало → обрезается перечисление статей.</div>
+            </div>
+            <div class="input-group">
+              <label class="input-label">Temperature</label>
+              <input type="number" class="input" id="ai-temperature" min="0" max="2" step="0.05" placeholder="0.2" />
+              <div class="text-xs text-muted" style="margin-top:4px">0 — детерминированно, 1 — креативно, 2 — хаос. Для правового ассистента 0.1–0.3.</div>
+            </div>
+            <div class="input-group">
+              <label class="input-label">Rate limit (запросов/час на юзера)</label>
+              <input type="number" class="input" id="ai-rate-limit" min="1" max="100000" placeholder="60" />
+              <div class="text-xs text-muted" style="margin-top:4px">Скользящее окно 1 час, ключ = user.id. Дефолт: 60.</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--radius-lg);padding:20px">
+          <div class="section-title">Состояние</div>
+          <div class="text-sm" id="ai-status-info" style="line-height:1.7">—</div>
+          <div class="text-xs text-muted" style="margin-top:8px">
+            Env-переменные (<code>AI_API_KEY</code>, <code>AI_API_BASE_URL</code>, <code>AI_MODEL</code>, <code>AI_MAX_TOKENS</code>, <code>AI_TEMPERATURE</code>, <code>AI_RATE_LIMIT_PER_HOUR</code>) продолжают работать как <b>fallback</b> — используются если соответствующее поле в БД пустое.
+          </div>
         </div>
       </div>
     </main>

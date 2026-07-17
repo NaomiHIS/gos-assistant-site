@@ -91,6 +91,7 @@
     if (name === 'subscriptions') initSubscriptionsView();
     if (name === 'payments') initPaymentsView();
     if (name === 'contacts') initContactsView();
+    if (name === 'ai-settings') initAiSettingsView();
   }
 
   // ============================================================
@@ -3024,6 +3025,113 @@
     } finally {
       btn.disabled = false;
       btn.textContent = 'Сохранить';
+    }
+  }
+
+  // ============================================================
+  // AI settings (admin)
+  // ============================================================
+  let aiSettingsInited = false;
+
+  async function initAiSettingsView() {
+    if (!aiSettingsInited) {
+      aiSettingsInited = true;
+      $('btn-save-ai').addEventListener('click', saveAiSettings);
+      $('btn-test-ai').addEventListener('click', testAiSettings);
+      $('btn-clear-ai-key').addEventListener('click', clearAiKey);
+    }
+    await loadAiSettings();
+  }
+
+  function authHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + window.GosClient.getToken(),
+    };
+  }
+
+  async function loadAiSettings() {
+    try {
+      const res = await fetch('/api/ai/settings', { headers: authHeaders() }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось загрузить настройки');
+      const s = res.settings || {};
+      $('ai-base-url').value = s.baseUrl || '';
+      $('ai-api-key').value = ''; // никогда не префилим ключ
+      $('ai-key-current').textContent = s.hasApiKey ? (s.apiKeyMasked || '(задан)') : 'не задан';
+      $('ai-model').value = s.model || '';
+      $('ai-max-tokens').value = s.maxTokens != null ? s.maxTokens : '';
+      $('ai-temperature').value = s.temperature != null ? s.temperature : '';
+      $('ai-rate-limit').value = s.rateLimitPerHour != null ? s.rateLimitPerHour : '';
+      const env = res.envDefaults || {};
+      const updated = s.updatedAt ? new Date(s.updatedAt).toLocaleString('ru-RU') : '—';
+      $('ai-status-info').innerHTML = `
+        <div>API-ключ: <b>${s.hasApiKey ? 'настроен' : '<span style="color:var(--color-danger)">не настроен</span>'}</b></div>
+        <div>Активная модель: <code>${escapeHtmlA(s.model || '')}</code></div>
+        <div>Endpoint: <code>${escapeHtmlA(s.baseUrl || '')}</code></div>
+        <div>Обновлено: ${updated}</div>
+        <div style="margin-top:6px;color:var(--text-muted)">Env-fallback: model=<code>${escapeHtmlA(env.model || '')}</code>, base=<code>${escapeHtmlA(env.baseUrl || '')}</code>, key ${env.hasApiKey ? 'есть' : 'нет'}.</div>
+      `;
+    } catch (err) {
+      toast('Ошибка загрузки AI-настроек: ' + err.message);
+    }
+  }
+
+  async function saveAiSettings(opts) {
+    const btn = $('btn-save-ai');
+    btn.disabled = true;
+    const oldTxt = btn.textContent;
+    btn.textContent = 'Сохраняем...';
+    try {
+      const body = {
+        baseUrl: $('ai-base-url').value.trim(),
+        model: $('ai-model').value.trim(),
+        maxTokens: $('ai-max-tokens').value.trim(),
+        temperature: $('ai-temperature').value.trim(),
+        rateLimitPerHour: $('ai-rate-limit').value.trim(),
+      };
+      const keyInput = $('ai-api-key').value;
+      if (opts && opts.clearKey) {
+        body.apiKey = '';
+      } else if (keyInput && keyInput.trim()) {
+        body.apiKey = keyInput.trim();
+      }
+      const res = await fetch('/api/ai/settings', {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось сохранить');
+      toast('AI-настройки сохранены');
+      $('ai-api-key').value = '';
+      await loadAiSettings();
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldTxt || 'Сохранить';
+    }
+  }
+
+  async function clearAiKey() {
+    if (!confirm('Очистить сохранённый API-ключ? После этого AI будет использовать ключ из env-переменной AI_API_KEY (если задан).')) return;
+    await saveAiSettings({ clearKey: true });
+  }
+
+  async function testAiSettings() {
+    const btn = $('btn-test-ai');
+    btn.disabled = true;
+    const oldTxt = btn.textContent;
+    btn.textContent = 'Проверяем...';
+    try {
+      const res = await fetch('/api/ai/settings/test', { method: 'POST', headers: authHeaders() })
+        .then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Провайдер недоступен');
+      toast('OK: модель ' + (res.model || '?') + ' ответила');
+    } catch (err) {
+      toast('Ошибка проверки: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldTxt || 'Проверить соединение';
     }
   }
 
