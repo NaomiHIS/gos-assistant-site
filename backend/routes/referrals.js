@@ -119,12 +119,20 @@ router.post('/device', requireAuth, async (req, res) => {
     const hwid = validateHwid(req.body && req.body.hwid);
     if (!hwid) return res.status(400).json({ success: false, error: 'Invalid hwid' });
     const platform = String((req.body && req.body.platform) || '').slice(0, 32);
+    const appVersion = String((req.body && req.body.appVersion) || '').slice(0, 32);
     const ip = extractIp(req);
+    // last_seen обновляется явно (ON UPDATE CURRENT_TIMESTAMP не срабатывает если
+    // никакие значения не меняются). ping_count += 1 → метрика активности.
     await db.query(
-      `INSERT INTO user_devices (user_id, hwid, platform, first_ip, last_ip)
-       VALUES (?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE last_ip = VALUES(last_ip), platform = COALESCE(VALUES(platform), platform)`,
-      [req.user.id, hwid, platform || null, ip || null, ip || null]
+      `INSERT INTO user_devices (user_id, hwid, platform, app_version, first_ip, last_ip, ping_count)
+       VALUES (?, ?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         last_ip = VALUES(last_ip),
+         platform = COALESCE(VALUES(platform), platform),
+         app_version = COALESCE(VALUES(app_version), app_version),
+         ping_count = ping_count + 1,
+         last_seen = CURRENT_TIMESTAMP`,
+      [req.user.id, hwid, platform || null, appVersion || null, ip || null, ip || null]
     );
     res.json({ success: true });
   } catch (err) {

@@ -2,10 +2,14 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const router = express.Router();
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const DL_TOKEN_TTL = '5m';
 
 function computeSha512(filePath) {
   return new Promise((resolve, reject) => {
@@ -98,6 +102,9 @@ router.get('/latest', async (req, res) => {
 
 // ============================================================
 // GET /api/releases/download/:id — публичный, отдаёт файл (требует логин)
+// Оставлен для обратной совместимости (старые версии сайта/приложения)
+// Новые клиенты используют /download-token + /dl?t= — там нет задержки
+// на буферизацию, браузер стримит сразу через нативный dl-менеджер.
 // ============================================================
 router.get('/download/:id', requireAuth, async (req, res) => {
   try {
@@ -119,6 +126,68 @@ router.get('/download/:id', requireAuth, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// POST /api/releases/download-token/:id — auth: выдаёт короткоживущую
+// подписанную ссылку. Клиент делает window.location = url, браузер
+// стримит файл нативно (без буферизации в blob) — отсюда «моментальный» старт.
+// ============================================================
+router.post('/download-token/:id', requireAuth, async (req, res) => {
+  try {
+    const release = await db.queryOne(
+      'SELECT id, is_active FROM releases WHERE id = ?',
+      [req.params.id]
+    );
+    if (!release || !release.is_active) {
+      return res.status(404).json({ success: false, error: 'Файл не найден' });
+    }
+    const token = jwt.sign(
+      { rid: release.id, uid: req.user.id, kind: 'dl' },
+      JWT_SECRET,
+      { expiresIn: DL_TOKEN_TTL }
+    );
+    res.json({
+      success: true,
+      url: `/api/releases/dl/${release.id}?t=${encodeURIComponent(token)}`,
+      expiresIn: 300,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ============================================================
+// GET /api/releases/dl/:id?t=SIGNED — без middleware requireAuth,
+// но проверяет подпись токена и rid. Стримит файл.
+// ============================================================
+router.get('/dl/:id', async (req, res) => {
+  const token = req.query.t;
+  if (!token) return res.status(401).send('missing token');
+  let payload;
+  try {
+    payload = jwt.verify(String(token), JWT_SECRET);
+  } catch {
+    return res.status(401).send('invalid or expired token');
+  }
+  if (!payload || payload.kind !== 'dl' || String(payload.rid) !== String(req.params.id)) {
+    return res.status(401).send('token/release mismatch');
+  }
+  try {
+    const release = await db.queryOne(
+      'SELECT * FROM releases WHERE id = ? AND is_active = 1',
+      [req.params.id]
+    );
+    if (!release) return res.status(404).send('not found');
+    const filePath = path.join(UPLOADS_DIR, release.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).send('file missing');
+    await db.query('UPDATE releases SET download_count = download_count + 1 WHERE id = ?', [release.id]);
+    res.download(filePath, release.original_name, (err) => {
+      if (err) console.error('Download stream error:', err);
+    });
+  } catch (err) {
+    res.status(500).send(err.message);
   }
 });
 

@@ -92,6 +92,7 @@
     if (name === 'payments') initPaymentsView();
     if (name === 'contacts') initContactsView();
     if (name === 'ai-settings') initAiSettingsView();
+    if (name === 'notifications') initNotificationsView();
   }
 
   // ============================================================
@@ -117,6 +118,7 @@
     if (name === 'project') prepareProjectModal(data);
     if (name === 'category') prepareCategoryModal(data);
     if (name === 'promo') preparePromoModal(data);
+    if (name === 'notification') prepareNotificationModal(data);
     if (name === 'article') prepareArticleModal(data);
     if (name === 'donate') {
       openDonateModal(data);
@@ -160,6 +162,7 @@
   // ============================================================
   // Dashboard
   // ============================================================
+  let dashboardWired = false;
   async function renderDashboard() {
     $('stat-servers').textContent = State.servers.length;
     $('stat-categories').textContent = State.categories.length;
@@ -178,6 +181,96 @@
         </tr>
       `).join('');
     } catch {}
+    if (!dashboardWired) {
+      dashboardWired = true;
+      const btn = $('btn-refresh-usage');
+      if (btn) btn.addEventListener('click', loadAppUsage);
+    }
+    loadAppUsage();
+  }
+
+  async function loadAppUsage() {
+    try {
+      const res = await fetch('/api/admin/stats/app-usage', {
+        headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'stats failed');
+      const w = res.windows || {};
+      $('stat-dau').textContent = w.dau;
+      $('stat-wau').textContent = w.wau;
+      $('stat-mau').textContent = w.mau;
+      $('stat-app-users').textContent = w.totalUsers;
+      $('stat-devices').textContent = w.totalDevices;
+      $('stat-pings').textContent = w.totalPings;
+
+      const fmtUsage = (rows) => rows.length
+        ? rows.map((r) => `
+            <tr>
+              <td>
+                <div>${escapeHtml(r.username || '—')}</div>
+                <div class="text-xs text-muted">${escapeHtml(r.email || '')}</div>
+              </td>
+              <td>${Number(r.pings || 0)}</td>
+              <td>${Number(r.devices || 0)}</td>
+              <td class="text-xs">${escapeHtml((r.versions || '').split(',').filter(Boolean).slice(0, 3).join(', ') || '—')}</td>
+              <td class="text-xs text-muted" title="${escapeHtml(r.lastSeen || '')}">${formatRelative(r.lastSeen)}</td>
+            </tr>`).join('')
+        : '<tr><td colspan="5" class="text-muted">Пока никого</td></tr>';
+      $('usage-top-active').innerHTML = fmtUsage(res.topActive || []);
+      $('usage-recent-active').innerHTML = fmtUsage(res.recentActive || []);
+
+      const versions = res.versions || [];
+      $('usage-versions').innerHTML = versions.length
+        ? versions.map((v) => `<tr><td><code>${escapeHtml(v.version)}</code></td><td>${v.users}</td><td>${v.devices}</td></tr>`).join('')
+        : '<tr><td colspan="3" class="text-muted">Нет данных</td></tr>';
+
+      renderDailyChart(res.daily || []);
+    } catch (err) {
+      $('stat-dau').textContent = '—';
+      const tbody = $('usage-top-active');
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-muted">Ошибка: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderDailyChart(daily) {
+    const cont = $('usage-daily');
+    if (!cont) return;
+    // Заполняем пропущенные дни нулями, чтобы бары шли ровным рядом
+    const map = new Map();
+    daily.forEach((d) => map.set(String(d.day).slice(0, 10), Number(d.users) || 0));
+    const days = [];
+    const today = new Date();
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date(today);
+      dt.setDate(today.getDate() - i);
+      const key = dt.toISOString().slice(0, 10);
+      days.push({ day: key, users: map.get(key) || 0 });
+    }
+    const max = Math.max(1, ...days.map((d) => d.users));
+    cont.innerHTML = days.map((d) => {
+      const h = Math.max(4, Math.round((d.users / max) * 100));
+      const short = d.day.slice(5);
+      return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0">
+        <div style="width:100%;height:${h}%;background:var(--color-primary,#DF005B);border-radius:3px 3px 0 0" title="${d.day}: ${d.users}"></div>
+        <div class="text-xs text-muted" style="font-size:10px">${short}</div>
+        <div class="text-xs" style="font-size:10px">${d.users}</div>
+      </div>`;
+    }).join('');
+  }
+
+  function formatRelative(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    const diff = Date.now() - d.getTime();
+    const sec = Math.round(diff / 1000);
+    if (sec < 60) return sec + ' сек назад';
+    const min = Math.round(sec / 60);
+    if (min < 60) return min + ' мин назад';
+    const hr = Math.round(min / 60);
+    if (hr < 24) return hr + ' ч назад';
+    const day = Math.round(hr / 24);
+    if (day < 30) return day + ' д назад';
+    return d.toLocaleDateString('ru-RU');
   }
 
   // ============================================================
@@ -3132,6 +3225,227 @@
     } finally {
       btn.disabled = false;
       btn.textContent = oldTxt || 'Проверить соединение';
+    }
+  }
+
+  // ============================================================
+  // Notifications (admin)
+  // ============================================================
+  let notificationsInited = false;
+  const NotifState = { items: [], editing: null, selectedUser: null };
+
+  async function initNotificationsView() {
+    if (!notificationsInited) {
+      notificationsInited = true;
+      $('nt-save').addEventListener('click', saveNotification);
+      $('nt-audience').addEventListener('change', () => {
+        $('nt-user-group').style.display = $('nt-audience').value === 'user' ? '' : 'none';
+      });
+      $('nt-user-search').addEventListener('input', debounce(searchNotifUsers, 200));
+      $('nt-user-search').addEventListener('focus', () => {
+        if ($('nt-user-suggest').children.length) $('nt-user-suggest').style.display = '';
+      });
+      document.addEventListener('click', (e) => {
+        if (!e.target.closest('#nt-user-group')) $('nt-user-suggest').style.display = 'none';
+      });
+    }
+    await loadNotifications();
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return function () {
+      clearTimeout(t);
+      const args = arguments;
+      t = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }
+
+  async function loadNotifications() {
+    try {
+      const res = await fetch('/api/notifications', {
+        headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Ошибка загрузки');
+      NotifState.items = res.notifications || [];
+      renderNotificationsTable();
+    } catch (err) {
+      $('notifications-table').innerHTML =
+        `<tr><td colspan="7" class="text-muted">Ошибка: ${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function renderNotificationsTable() {
+    const tbody = $('notifications-table');
+    if (!NotifState.items.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-muted">Пока пусто. Создайте первое уведомление.</td></tr>';
+      return;
+    }
+    const kindLabel = { info: 'Инфо', promo: 'Промо', sale: 'Скидка', warning: 'Внимание' };
+    tbody.innerHTML = NotifState.items.map((n) => {
+      const audLabel = n.audience === 'all'
+        ? '<span class="badge badge-muted">Все</span>'
+        : `<span class="badge badge-primary">@${escapeHtml(n.targetUsername || ('user#' + n.targetUserId))}</span>`;
+      const status = n.isActive ? '<span class="badge badge-success">Активно</span>' : '<span class="badge badge-muted">Черновик</span>';
+      const expires = n.expiresAt ? formatDate(n.expiresAt) : '—';
+      return `
+        <tr>
+          <td>
+            <div><b>${escapeHtml(n.title)}</b></div>
+            <div class="text-xs text-muted">${escapeHtml((n.body || '').slice(0, 100))}${(n.body || '').length > 100 ? '…' : ''}</div>
+          </td>
+          <td><span class="badge">${escapeHtml(kindLabel[n.kind] || n.kind)}</span></td>
+          <td>${audLabel}</td>
+          <td class="text-xs text-muted">${expires}</td>
+          <td class="text-xs">✓ ${n.readsCount} · ✕ ${n.dismissedCount}</td>
+          <td>${status}</td>
+          <td>
+            <button class="btn btn-sm btn-secondary" data-nt-edit="${n.id}">Изм.</button>
+            <button class="btn btn-sm btn-danger" data-nt-del="${n.id}">Удалить</button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    tbody.querySelectorAll('[data-nt-edit]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = Number(b.dataset.ntEdit);
+        const n = NotifState.items.find((x) => x.id === id);
+        if (n) openModal('notification', n);
+      });
+    });
+    tbody.querySelectorAll('[data-nt-del]').forEach((b) => {
+      b.addEventListener('click', () => deleteNotification(Number(b.dataset.ntDel)));
+    });
+  }
+
+  function prepareNotificationModal(data) {
+    NotifState.editing = data || null;
+    NotifState.selectedUser = null;
+    $('modal-notification-title').textContent = data ? 'Редактирование уведомления' : 'Новое уведомление';
+    $('nt-title').value = data ? (data.title || '') : '';
+    $('nt-body').value = data ? (data.body || '') : '';
+    $('nt-kind').value = data ? (data.kind || 'info') : 'info';
+    $('nt-audience').value = data ? (data.audience || 'all') : 'all';
+    $('nt-cta-label').value = data ? (data.ctaLabel || '') : '';
+    $('nt-cta-url').value = data ? (data.ctaUrl || '') : '';
+    $('nt-starts-at').value = data && data.startsAt ? toLocalInput(data.startsAt) : '';
+    $('nt-expires-at').value = data && data.expiresAt ? toLocalInput(data.expiresAt) : '';
+    $('nt-active').checked = data ? !!data.isActive : true;
+    $('nt-user-group').style.display = $('nt-audience').value === 'user' ? '' : 'none';
+    $('nt-user-search').value = '';
+    $('nt-user-suggest').innerHTML = '';
+    $('nt-user-suggest').style.display = 'none';
+    if (data && data.audience === 'user') {
+      NotifState.selectedUser = { id: data.targetUserId, username: data.targetUsername, email: data.targetEmail };
+      $('nt-user-selected').textContent = (data.targetUsername || '') + ' <' + (data.targetEmail || '') + '>';
+    } else {
+      $('nt-user-selected').textContent = '—';
+    }
+  }
+
+  function toLocalInput(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+         + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  async function searchNotifUsers() {
+    const q = $('nt-user-search').value.trim().toLowerCase();
+    const box = $('nt-user-suggest');
+    if (!q || q.length < 2) { box.style.display = 'none'; return; }
+    // Ищем в уже загруженном State.users (полный список подтягивается на дашборде)
+    let pool = State.users;
+    if (!pool || !pool.length) {
+      try { pool = await window.GosClient.users.list(); State.users = pool; } catch { pool = []; }
+    }
+    const matches = pool.filter((u) => {
+      const s = (u.username + ' ' + u.email).toLowerCase();
+      return s.includes(q);
+    }).slice(0, 15);
+    if (!matches.length) {
+      box.innerHTML = '<div class="text-muted" style="padding:8px">Никого не нашли</div>';
+      box.style.display = '';
+      return;
+    }
+    box.innerHTML = matches.map((u) => `
+      <div data-uid="${u.id}" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border-color)">
+        <div><b>${escapeHtml(u.username)}</b></div>
+        <div class="text-xs text-muted">${escapeHtml(u.email)} · #${u.id}</div>
+      </div>
+    `).join('');
+    box.querySelectorAll('[data-uid]').forEach((el) => {
+      el.addEventListener('mouseenter', () => el.style.background = 'var(--bg-hover, rgba(255,255,255,0.05))');
+      el.addEventListener('mouseleave', () => el.style.background = '');
+      el.addEventListener('click', () => {
+        const u = matches.find((x) => x.id === Number(el.dataset.uid));
+        if (!u) return;
+        NotifState.selectedUser = u;
+        $('nt-user-selected').textContent = u.username + ' <' + u.email + '>';
+        $('nt-user-search').value = u.username;
+        box.style.display = 'none';
+      });
+    });
+    box.style.display = '';
+  }
+
+  async function saveNotification() {
+    const body = {
+      title: $('nt-title').value.trim(),
+      body: $('nt-body').value,
+      kind: $('nt-kind').value,
+      audience: $('nt-audience').value,
+      ctaLabel: $('nt-cta-label').value.trim(),
+      ctaUrl: $('nt-cta-url').value.trim(),
+      startsAt: $('nt-starts-at').value ? new Date($('nt-starts-at').value).toISOString() : null,
+      expiresAt: $('nt-expires-at').value ? new Date($('nt-expires-at').value).toISOString() : null,
+      isActive: $('nt-active').checked,
+    };
+    if (!body.title) { toast('Введите заголовок'); return; }
+    if (body.audience === 'user') {
+      if (!NotifState.selectedUser || !NotifState.selectedUser.id) {
+        toast('Выберите получателя'); return;
+      }
+      body.targetUserId = NotifState.selectedUser.id;
+    }
+    const isEdit = !!(NotifState.editing && NotifState.editing.id);
+    const url = '/api/notifications' + (isEdit ? '/' + NotifState.editing.id : '');
+    const btn = $('nt-save');
+    btn.disabled = true;
+    const oldTxt = btn.textContent;
+    btn.textContent = 'Сохраняем...';
+    try {
+      const res = await fetch(url, {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + window.GosClient.getToken() },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось сохранить');
+      toast(isEdit ? 'Уведомление обновлено' : 'Уведомление создано');
+      closeAllModals();
+      await loadNotifications();
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = oldTxt;
+    }
+  }
+
+  async function deleteNotification(id) {
+    if (!confirm('Удалить уведомление? Все связанные отметки о прочтении тоже удалятся.')) return;
+    try {
+      const res = await fetch('/api/notifications/' + id, {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+      }).then((r) => r.json());
+      if (!res.success) throw new Error(res.error || 'Не удалось удалить');
+      toast('Удалено');
+      await loadNotifications();
+    } catch (err) {
+      toast('Ошибка: ' + err.message);
     }
   }
 

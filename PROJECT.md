@@ -227,6 +227,9 @@ D:\MVD Assistant\
 | `referrals` | id, referrer_user_id, referee_user_id (UNIQUE), referee_ip, referee_user_agent, status (granted/blocked), block_reason, **redeem_source (web/app)**, **redeem_hwid**, referrer_reward_days, referee_reward_days, created_at — журнал реферальных активаций (включая blocked-попытки для антифрод-аудита) |
 | `user_devices` | id, user_id, **hwid CHAR(64)** (SHA-256 от BIOS UUID+MAC+hostname), platform, first_ip, last_ip, first_seen, last_seen, UNIQUE (user_id, hwid). Накопительный учёт устройств для антифрод-проверки реферальных кодов. |
 | `ai_settings` | Single-row (id=1): **api_key, base_url, model, max_tokens, temperature, rate_limit_per_hour**, is_configured, updated_by, updated_at — конфиг AI-провайдера редактируется из админки (**Админ → AI-настройки**). Пустые поля → fallback на env-переменные `AI_*`. |
+| `notifications` | id, title, body, **kind** (info/promo/sale/warning), **audience** (all/user), target_user_id, cta_label, cta_url, starts_at, expires_at, is_active, created_by, created_at — админ шлёт из **Админ → Уведомления**. Показываются в кабинете и в приложении (модалка + inbox на «Главная»). |
+| `notification_reads` | id, notification_id, user_id, read_at, dismissed_at, **UNIQUE (notification_id, user_id)** — отметки о прочтении/скрытии от юзера. |
+| `user_devices` (**расширено**) | + `app_version VARCHAR(32)`, `ping_count INT` — трекинг активности приложения. Обновляется при каждом старте (`POST /referrals/device`). Используется на дашборде админки (DAU/WAU/MAU + топ активных). |
 
 **Важно:** есть авто-инициализация в `init-db.js` — при первом запуске сервера создаёт таблицы и заливает seed.
 **Также `init-db.js` запускает миграции на каждом старте** (через `runMigrations()` + хелпер `ensureColumn`) — туда добавляются `CREATE TABLE IF NOT EXISTS` и `ALTER ADD COLUMN IF NOT EXISTS` для новых полей, чтобы апгрейд работал без ручного SQL. Сейчас миграция создаёт: `maintenance`, `support_tickets`, `support_messages`, `subscription_plans` (+ ALTER для price_cents/currency/duration_days/is_purchasable), `user_subscriptions`, `payment_providers`, `payments`, `site_contacts`, `note_shares`, `binder_shares`, `referrals` (+ ALTER для redeem_source/redeem_hwid), `user_devices`, **`projects`** (+ seed majestic/gta5rp), **`promo_codes`** + **`promo_redemptions`**, и ALTER: `users` (`locked_server_id`, `locked_project_id`, `referral_code`, `referred_by_user_id`, `registration_ip`, `referral_redeemed`), `servers` (`project_id`, backfill в majestic), `categories` (`project_id NULL`). Сидятся: план `lite` (149₽/30д), `premium` (299₽/30д) — оба с фичами `binder_unlimited`, `binder_share`; провайдеры `yookassa` (выкл), **`robokassa` (выкл)** и `manual` (вкл).
@@ -313,6 +316,20 @@ D:\MVD Assistant\
 - `GET /ai/settings` (admin) — текущий конфиг с **маскированным** ключом (`••••XXXX`), плюс `envDefaults` для справки.
 - `PUT /ai/settings` (admin) — `{ apiKey?, baseUrl?, model?, maxTokens?, temperature?, rateLimitPerHour? }`. `apiKey`: не передан — не трогаем; пустая строка — очистить (тогда fallback на env). Остальные поля пустые → NULL → fallback на env. Изменения применяются сразу (кэш конфига 30с).
 - `POST /ai/settings/test` (admin) — пингует upstream (`chat/completions` с `max_tokens: 10`), возвращает первые 200 символов ответа. Timeout 20с.
+
+### Notifications
+- `GET /notifications/mine` (auth) — активные уведомления для юзера (audience=all + свои adressed). Возвращает `{ notifications, unread }` с полями `isRead`, `isDismissed`. `?includeDismissed=1` — показать и скрытые.
+- `POST /notifications/:id/read` (auth) — идемпотентно отметить прочитанным.
+- `POST /notifications/:id/dismiss` (auth) — скрыть у себя (не удаляет уведомление в БД).
+- Admin: `GET /notifications` (список с readsCount/dismissedCount), `POST /notifications`, `PUT /notifications/:id`, `DELETE /notifications/:id`. Тело: `{ title, body, kind, audience, targetUserId?, ctaLabel?, ctaUrl?, startsAt?, expiresAt?, isActive }`.
+
+### Admin stats
+- `GET /admin/stats/app-usage` (admin) — DAU/WAU/MAU по `user_devices.last_seen`, распределение по версиям, топ активных юзеров (по ping_count за 30д), недавно активные, гистограмма DAU за 14д.
+
+### Releases (обновлено — быстрая загрузка)
+- `POST /releases/download-token/:id` (auth) — выдаёт короткоживущий (5м) подписанный токен и URL вида `/api/releases/dl/:id?t=…`.
+- `GET /releases/dl/:id?t=…` — без auth-middleware, проверяет подпись. Стримит файл нативно через `res.download`. Фронт делает `<a href>.click()` вместо fetch→blob — начинается моментально.
+- `GET /releases/download/:id` — старая версия оставлена для обратной совместимости.
 
 ### Payments
 - `GET /subscriptions/plans/public` — публично, без auth: тарифы с ценой/сроком для страницы /pricing.html
@@ -475,7 +492,9 @@ npm run dist
 # 5. Пользователи получат обновление автоматически через ~4 часа
 ```
 
-**Текущая версия приложения: 1.1.0** (бампать перед каждой сборкой)
+**Текущая версия приложения: 1.1.1** (бампать перед каждой сборкой)
+
+Изменения 1.1.1: **Уведомления в приложении** — админ рассылает акции/скидки из /admin.html → «Уведомления», приложение показывает модалку + inbox-карточку на «Главной». **Трекинг приложения** — `POST /referrals/device` отправляет `appVersion`, накапливается в `user_devices.ping_count`, используется для DAU/WAU/MAU на админ-дашборде.
 
 Изменения 1.1.0: **Проекты (мультипроектность)** — верхний уровень над серверами (Majestic RP + заготовка GTA 5 RP), cascade в регистрации, dropdown проекта в приложении. **Форматирование в заметках** (B/I/U + списки) через contenteditable + HTML-санитайзер на бэке. **F11 fullscreen отключён** во всех окнах. AI-ассистент: фикс регекса — теперь распознаёт `12.8 ч.1` / `12.8.1` / `12.8 ч.2` в БД Majestic-парсера.
 
@@ -531,7 +550,7 @@ npm run dist
 | `/pricing.html` | Публичная страница тарифов. Карточки планов (Lite/Premium) с ценой/сроком/фичами. Модалка «Купить» с выбором провайдера оплаты + дисклеймер согласия с офертой и политикой |
 | `/contacts.html` | Контакты владельца — карточка с аватаром, соцсетями, кастомными ссылками |
 | `/cabinet.html` | Личный кабинет — вкладки: **Профиль (с карточкой подписки + Реферальная программа)**, Безопасность (включая привязку Discord), Приложение (скачивание), Данные (серверы, поиск), **Поддержка (с бейджем непрочитанных)**. Хеш-роутинг: `/cabinet.html#download` (+ алиасы `#downloads`/`#app`/`#application`) автоматически переключает на вкладку Приложение. Если гость → редирект на `/login.html?redirect=<orig URL>` с возвратом после авторизации. |
-| `/admin.html` | Админ-панель (требует role: admin). Вкладки: Дашборд, Серверы, Категории, Статьи, Пользователи, Парсер, Релизы, Донат, DevLog, **Тех. работы**, **Поддержка (с бейджем)**, **Подписки**, **Платежи**, **Контакты**, **AI-настройки** |
+| `/admin.html` | Админ-панель (требует role: admin). Вкладки: **Дашборд (со стат-блоком «Использование приложения»)**, Серверы, Категории, Статьи, Пользователи, Парсер, Релизы, Донат, DevLog, **Тех. работы**, **Поддержка (с бейджем)**, **Подписки**, **Платежи**, **Контакты**, **AI-настройки**, **Уведомления** |
 | `/devlog.html` | Публичный журнал изменений |
 | `/terms.html` | Условия использования |
 | `/privacy.html` | Политика конфиденциальности (v1.1 — с разделом «Платежи и подписки» про ЮKassa/Robokassa, 5-летнее хранение платежных данных по 402-ФЗ) |

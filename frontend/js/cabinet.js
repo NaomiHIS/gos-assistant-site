@@ -47,8 +47,66 @@
     refreshSupportBadge();
     loadSubscription();
     loadReferral();
+    loadNotifications();
+    setInterval(loadNotifications, 60_000);
     handleDiscordReturnParams();
     handlePaymentReturn();
+  }
+
+  // ============================================================
+  // Notifications inbox — на вкладке «Профиль»
+  // ============================================================
+  async function loadNotifications() {
+    const cont = document.getElementById('notifications-inbox');
+    if (!cont) return;
+    try {
+      const token = window.GosClient.getToken();
+      if (!token) return;
+      const res = await fetch(window.GosClient.API_BASE + '/notifications/mine', {
+        headers: { Authorization: 'Bearer ' + token },
+      }).then((r) => r.json());
+      if (!res.success) return;
+      const items = (res.notifications || []).filter((n) => !n.isDismissed);
+      if (!items.length) { cont.innerHTML = ''; return; }
+      const bg = { info: 'rgba(59,130,246,0.08)', promo: 'rgba(223,0,91,0.08)', sale: 'rgba(34,197,94,0.08)', warning: 'rgba(234,179,8,0.10)' };
+      const bd = { info: '#3b82f6', promo: '#DF005B', sale: '#22c55e', warning: '#eab308' };
+      cont.innerHTML = items.map((n) => `
+        <div class="cabinet-card" data-notif-id="${n.id}" style="margin-bottom:12px;background:${bg[n.kind] || bg.info};border-left:4px solid ${bd[n.kind] || bd.info}">
+          <div class="cabinet-card-body" style="display:flex;gap:12px;align-items:flex-start">
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;margin-bottom:4px">${escapeHtml(n.title)}</div>
+              ${n.body ? `<div class="text-sm" style="white-space:pre-wrap;line-height:1.5">${escapeHtml(n.body)}</div>` : ''}
+              ${n.ctaLabel && n.ctaUrl ? `<div style="margin-top:10px"><a href="${escapeHtml(n.ctaUrl)}" target="_blank" rel="noopener" class="btn btn-primary btn-sm">${escapeHtml(n.ctaLabel)}</a></div>` : ''}
+            </div>
+            <button class="btn btn-secondary btn-sm" data-notif-dismiss="${n.id}" title="Скрыть">✕</button>
+          </div>
+        </div>
+      `).join('');
+      cont.querySelectorAll('[data-notif-dismiss]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.notifDismiss;
+          const card = btn.closest('[data-notif-id]');
+          if (card) card.style.opacity = '0.5';
+          try {
+            await fetch(window.GosClient.API_BASE + '/notifications/' + id + '/dismiss', {
+              method: 'POST',
+              headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+            });
+          } catch {}
+          if (card) card.remove();
+          if (!cont.children.length) cont.innerHTML = '';
+        });
+      });
+      // Отмечаем всё что показали как read (fire-and-forget)
+      items.filter((n) => !n.isRead).forEach((n) => {
+        fetch(window.GosClient.API_BASE + '/notifications/' + n.id + '/read', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + window.GosClient.getToken() },
+        }).catch(() => {});
+      });
+    } catch {
+      // silent — не критично для UX
+    }
   }
 
   // ============================================================
@@ -681,24 +739,26 @@
       toast('Войдите в аккаунт');
       return;
     }
+    // Получаем короткоживущую подписанную ссылку и сразу навигируем — браузер
+    // сам стримит файл нативно, без задержки на буферизацию в blob.
     try {
-      const res = await fetch(window.GosClient.API_BASE + '/releases/download/' + id, {
+      const res = await fetch(window.GosClient.API_BASE + '/releases/download-token/' + id, {
+        method: 'POST',
         headers: { 'Authorization': 'Bearer ' + token },
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        toast('Ошибка: ' + (err.error || res.statusText));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success || !data.url) {
+        toast('Ошибка: ' + (data.error || res.statusText || 'нет URL'));
         return;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = originalName || ('GOS-Assistant-' + id);
+      a.href = data.url;
+      a.rel = 'noopener';
+      // Атрибут download нужен, чтобы браузер не пытался «открыть» exe
+      if (originalName) a.download = originalName;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
       toast('Загрузка началась');
     } catch (err) {
       toast('Ошибка: ' + err.message);

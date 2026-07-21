@@ -442,6 +442,9 @@ async function runMigrations() {
       ) ENGINE=InnoDB
     `);
     await ensureColumn('users', 'referral_redeemed', 'TINYINT(1) NOT NULL DEFAULT 0');
+    // Расширение user_devices для трекинга использования приложения
+    await ensureColumn('user_devices', 'app_version', 'VARCHAR(32) NULL');
+    await ensureColumn('user_devices', 'ping_count', 'INT NOT NULL DEFAULT 0');
     console.log('[InitDB] ✓ user_devices ensured');
 
     // ============================================================
@@ -465,6 +468,43 @@ async function runMigrations() {
     `);
     await db.query('INSERT IGNORE INTO ai_settings (id) VALUES (1)');
     console.log('[InitDB] ✓ ai_settings ensured');
+
+    // ============================================================
+    // Notifications: админ шлёт всем или конкретному юзеру.
+    // Клиенты (сайт + Electron-приложение) поллят /api/notifications/mine.
+    // ============================================================
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS notifications (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        body TEXT NULL,
+        kind ENUM('info','promo','sale','warning') NOT NULL DEFAULT 'info',
+        audience ENUM('all','user') NOT NULL DEFAULT 'all',
+        target_user_id INT NULL,
+        cta_label VARCHAR(64) NULL,
+        cta_url VARCHAR(500) NULL,
+        starts_at TIMESTAMP NULL,
+        expires_at TIMESTAMP NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_by INT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_active (is_active, expires_at),
+        INDEX idx_target (audience, target_user_id)
+      ) ENGINE=InnoDB
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS notification_reads (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        notification_id INT NOT NULL,
+        user_id INT NOT NULL,
+        read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        dismissed_at TIMESTAMP NULL,
+        UNIQUE KEY uq_notif_user (notification_id, user_id),
+        INDEX idx_user (user_id, dismissed_at)
+      ) ENGINE=InnoDB
+    `);
+    console.log('[InitDB] ✓ notifications ensured');
   } catch (err) {
     console.warn('[InitDB] migration warning:', err.message);
   }
